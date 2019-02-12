@@ -1,0 +1,7 @@
+/media/swordigo/Code/Projects/LightDesign/Samples/differentiable_renderer/redner/build2/CMakeFiles/install/strip.dir
+/media/swordigo/Code/Projects/LightDesign/Samples/differentiable_renderer/redner/build2/CMakeFiles/edit_cache.dir
+/media/swordigo/Code/Projects/LightDesign/Samples/differentiable_renderer/redner/build2/CMakeFiles/redner.dir
+/media/swordigo/Code/Projects/LightDesign/Samples/differentiable_renderer/redner/build2/CMakeFiles/rebuild_cache.dir
+/media/swordigo/Code/Projects/LightDesign/Samples/differentiable_renderer/redner/build2/CMakeFiles/list_install_components.dir
+/media/swordigo/Code/Projects/LightDesign/Samples/differentiable_renderer/redner/build2/CMakeFiles/install/local.dir
+/media/swordigo/Code/Projects/LightDesign/Samples/differentiable_renderer/redner/build2/CMakeFiles/install.dir

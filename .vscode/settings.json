@@ -1,0 +1,4 @@
+{
+    "cmake.configureOnOpen": false,
+    "python.pythonPath": "/home/swordigo/.conda/envs/redner/bin/python"
+}

@@ -4,7 +4,9 @@ project(redner VERSION 0.0.1 DESCRIPTION "Differentiable Path Tracer")
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 
-find_package(Python 3.6 COMPONENTS Development REQUIRED)
+find_package(Python 3 COMPONENTS Development REQUIRED)
+MESSAGE( STATUS "Python_INCLUDE_DIRS:      q   " ${Python_INCLUDE_DIRS} )
+
 find_package(CUDA 10)
 if(CUDA_FOUND)
     find_package(OptiX REQUIRED)
@@ -79,6 +81,10 @@ if(APPLE)
     # at compile time.
     set(DYNAMIC_LOOKUP "-undefined dynamic_lookup")
 endif()
+
+# target_include_directories(redner pybind11/include)
+# add_subdirectory(pybind11)
+# pybind11_add_module(redner redner.cpp)
 
 if(CUDA_FOUND)
     add_compile_definitions(COMPILE_WITH_CUDA)

@@ -69,7 +69,7 @@ if pyredner.get_use_gpu():
     target = target.cuda()
 
 # Perturb the scene, this is our initial guess
-light_translation = torch.tensor([-0.4, -0.4, -0.4],
+light_translation = torch.tensor([0.4, -0.4, -0.8],
     device = pyredner.get_device(), requires_grad=True)
 shape_light.vertices = light_vertices + light_translation
 args = pyredner.RenderFunction.serialize_scene(\

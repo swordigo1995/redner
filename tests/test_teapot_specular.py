@@ -34,7 +34,8 @@ if pyredner.get_use_gpu():
 # Perturb the scene, this is our initial guess
 # We perturb the last shape, which is the SIGGRAPH logo
 ref_pos = scene.shapes[-1].vertices
-translation = torch.tensor([20.0, 0.0, 2.0], device = pyredner.get_device(), requires_grad=True)
+# translation = torch.tensor([20.0, 0.0, 2.0], device = pyredner.get_device(), requires_grad=True)
+translation = torch.tensor([23.0, 8.0, -1.0], device = pyredner.get_device(), requires_grad=True)
 scene.shapes[-1].vertices = ref_pos + translation
 args = pyredner.RenderFunction.serialize_scene(\
     scene = scene,
@@ -56,7 +57,8 @@ for t in range(num_iteration):
     scene.shapes[-1].vertices = ref_pos + translation
     args = pyredner.RenderFunction.serialize_scene(\
         scene = scene,
-        num_samples = 4,
+        # num_samples = 4,
+        num_samples = 16,
         max_bounces = 2)
     img = render(t+1, *args)
     pyredner.imwrite(img.cpu(), 'results/test_teapot_specular/iter_{}.png'.format(t))

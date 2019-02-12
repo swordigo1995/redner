@@ -1,0 +1,1 @@
+/home/swordigo/.conda/envs/redner/lib/python3.7/site-packages/redner.so

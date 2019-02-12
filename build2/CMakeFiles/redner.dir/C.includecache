@@ -1,0 +1,42 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/media/swordigo/Code/Projects/LightDesign/Samples/differentiable_renderer/redner/miniz.c
+miniz.h
+/media/swordigo/Code/Projects/LightDesign/Samples/differentiable_renderer/redner/miniz.h
+sys/stat.h
+-
+sys/utime.h
+-
+sys/utime.h
+-
+sys/utime.h
+-
+utime.h
+-
+utime.h
+-
+utime.h
+-
+
+/media/swordigo/Code/Projects/LightDesign/Samples/differentiable_renderer/redner/miniz.h
+stddef.h
+-
+time.h
+-
+assert.h
+-
+stdint.h
+-
+stdlib.h
+-
+string.h
+-
+stdio.h
+-
+
