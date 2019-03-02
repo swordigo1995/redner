@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 
-<scene version="0.5.0">
+<scene version="0.4.0">
 	<integrator type="path"/>
 
 	<sensor type="perspective">
@@ -92,13 +92,11 @@
 
 	<shape type="obj">
 		<string name="filename" value="meshes/cbox_smallbox.obj"/>
-
 		<ref id="box"/>
 	</shape>
 
 	<shape type="obj">
 		<string name="filename" value="meshes/cbox_largebox.obj"/>
-
 		<ref id="box"/>
 	</shape>
 </scene>

@@ -4,7 +4,8 @@ find_path(EMBREE_INCLUDE_PATH embree3/rtcore.h
   /opt/local/include)
 
 find_library(EMBREE_LIBRARY NAMES embree3 PATHS 
-  /usr/lib 
+  /usr/lib
+  /usr/lib64
   /usr/local/lib 
   /opt/local/lib)
 
