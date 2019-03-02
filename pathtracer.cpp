@@ -1874,6 +1874,7 @@ void render(const Scene &scene,
             ptr<float> d_rendered_image,
             std::shared_ptr<DScene> d_scene,
             ptr<float> debug_image) {
+    std::cout << "Rendering start..." << std::endl;
     parallel_init();
     ChannelInfo channel_info(options.channels, scene.use_gpu);
 
@@ -1894,6 +1895,7 @@ void render(const Scene &scene,
     auto optix_hits = path_buffer.optix_hits.view(0, 2 * num_pixels);
 
     ThrustCachedAllocator thrust_alloc(scene.use_gpu, num_pixels * sizeof(DTexture3));
+    std::cout << "Allocate complete!" << std::endl;
 
     // For each sample
     for (int sample_id = 0; sample_id < options.num_samples; sample_id++) {

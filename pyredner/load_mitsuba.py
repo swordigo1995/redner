@@ -163,6 +163,9 @@ def parse_material(node, two_sided = False):
     elif node.attrib['type'] == 'twosided':
         ret = parse_material(node[0], True)
         return (node_id, ret[1])
+    elif node.attrib['type'] == 'mask':
+        ret = parse_material(node[0])
+        return (node_id, ret[1])
     else:
         print('Unsupported material type:', node.attrib['type'])
         assert(False)
@@ -291,6 +294,7 @@ def parse_shape(node, material_dict, shape_id):
                 normals = normals.cuda()
         return shape.Shape(vertices, indices, uvs, normals, mat_id), lgt
     else:
+        print('Shape type {} is not supported!'.format(node.attrib['type']))
         assert(False)
 
 def parse_scene(node):
@@ -311,6 +315,7 @@ def parse_scene(node):
         elif child.tag == 'shape':
             shape, light = parse_shape(child, material_dict, len(shapes))
             shapes.append(shape)
+            print(len(shapes))
             if light is not None:
                 lights.append(light)
     return pyredner.Scene(cam, shapes, materials, lights)
