@@ -12,7 +12,7 @@ def parse_transform(node):
         if child.tag == 'matrix':
             value = torch.from_numpy(\
                 np.reshape(\
-                    np.fromstring(child.attrib['value'], dtype=np.float32, sep=' '),
+                    np.fromstring(child.attrib['value'], dtype=np.float32, sep=',' if ',' in child.attrib['value'] else ' '),
                     (4, 4)))
             ret = value @ ret
         elif child.tag == 'translate':
@@ -22,9 +22,12 @@ def parse_transform(node):
             value = transform.gen_translate_matrix(torch.tensor([x, y, z]))
             ret = value @ ret
         elif child.tag == 'scale':
-            x = float(child.attrib['x'])
-            y = float(child.attrib['y'])
-            z = float(child.attrib['z'])
+            if 'value' in child.attrib:
+                x = y = z = float(child.attrib['value'])
+            else:
+                x = float(child.attrib['x'])
+                y = float(child.attrib['y'])
+                z = float(child.attrib['z'])
             value = transform.gen_scale_matrix(torch.tensor([x, y, z]))
             ret = value @ ret
     return ret
@@ -124,6 +127,7 @@ def parse_material(node, two_sided = False):
         specular_reflectance = torch.tensor([0.0, 0.0, 0.0])
         specular_uv_scale = torch.tensor([1.0, 1.0])
         roughness = torch.tensor([1.0])
+        roughness_uv_scale = torch.tensor([1.0, 1.0])
         for child in node:
             if child.attrib['name'] == 'diffuseReflectance':
                 if child.tag == 'texture':
@@ -148,8 +152,17 @@ def parse_material(node, two_sided = False):
                 elif child.tag == 'rgb' or child.tag == 'spectrum':
                     specular_reflectance = parse_vector(child.attrib['value'])
             elif child.attrib['name'] == 'alpha':
-                alpha = float(child.attrib['value'])
-                roughness = torch.tensor([alpha * alpha])
+                if child.tag == 'texture':
+                    for grandchild in child:
+                        if grandchild.attrib['name'] == 'filename':
+                            roughness = 1 - pyredner.imread(grandchild.attrib['value'])
+                        elif grandchild.attrib['name'] == 'uscale':
+                            roughness_uv_scale[0] = float(grandchild.attrib['value'])
+                        elif grandchild.attrib['name'] == 'vscale':
+                            roughness_uv_scale[1] = float(grandchild.attrib['value'])
+                elif child.tag == 'float':
+                    alpha = float(child.attrib['value'])
+                    roughness = torch.tensor([alpha * alpha])
         if pyredner.get_use_gpu():
             # Copy to GPU
             diffuse_reflectance = diffuse_reflectance.cuda()
@@ -158,7 +171,7 @@ def parse_material(node, two_sided = False):
         return (node_id, pyredner.Material(\
                 diffuse_reflectance = pyredner.Texture(diffuse_reflectance, diffuse_uv_scale),
                 specular_reflectance = pyredner.Texture(specular_reflectance, specular_uv_scale),
-                roughness = pyredner.Texture(roughness),
+                roughness = pyredner.Texture(roughness, roughness_uv_scale),
                 two_sided = two_sided))
     elif node.attrib['type'] == 'twosided':
         ret = parse_material(node[0], True)
@@ -282,7 +295,7 @@ def parse_shape(node, material_dict, shape_id):
         assert(indices is not None)
         lgt = None
         if light_intensity is not None:
-            lgt = pyrender.Light(shape_id, light_intensity)
+            lgt = pyredner.AreaLight(shape_id, light_intensity)
 
         if pyredner.get_use_gpu():
             # Copy to GPU
@@ -292,7 +305,7 @@ def parse_shape(node, material_dict, shape_id):
                 uvs = uvs.cuda()
             if normals is not None:
                 normals = normals.cuda()
-        return shape.Shape(vertices, indices, uvs, normals, mat_id), lgt
+        return pyredner.Shape(vertices, indices, uvs, normals, mat_id), lgt
     else:
         print('Shape type {} is not supported!'.format(node.attrib['type']))
         assert(False)

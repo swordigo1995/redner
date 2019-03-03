@@ -1981,6 +1981,7 @@ void render(const Scene &scene,
             auto min_roughness = path_buffer.min_roughness.view(depth * num_pixels, num_pixels);
             auto next_min_roughness =
                 path_buffer.min_roughness.view((depth + 1) * num_pixels, num_pixels);
+            std::cout << "debug0" << std::endl;
 
             // Sample points on lights
             sampler.next_light_samples(light_samples);
@@ -1992,6 +1993,7 @@ void render(const Scene &scene,
                                   light_points,
                                   nee_rays);
             occluded(scene, active_pixels, nee_rays, optix_rays, optix_hits);
+            std::cout << "debug1";
             
             // Sample directions based on BRDF
             sampler.next_bsdf_samples(bsdf_samples);
@@ -2045,7 +2047,6 @@ void render(const Scene &scene,
             // Record the number of active pixels for next depth
             num_active_pixels[depth + 1] = next_active_pixels.size();
         }
-
         if (d_rendered_image.get() != nullptr) {
             bool first = true;
              // Traverse the path backward for the derivatives
