@@ -183,7 +183,7 @@ def parse_material(node, two_sided = False):
         print('Unsupported material type:', node.attrib['type'])
         assert(False)
 
-def parse_shape(node, material_dict, shape_id):
+def parse_shape(node, material_dict, shape_id, shape_group_dict = None):
     if node.attrib['type'] == 'obj' or node.attrib['type'] == 'serialized':
         to_world = torch.eye(4)
         serialized_shape_id = 0
@@ -306,6 +306,40 @@ def parse_shape(node, material_dict, shape_id):
             if normals is not None:
                 normals = normals.cuda()
         return pyredner.Shape(vertices, indices, uvs, normals, mat_id), lgt
+
+    elif node.attrib['type'] == 'instance':
+        shape = None
+        for child in node:
+            if 'name' in child.attrib:
+                if child.attrib['name'] == 'toWorld':
+                    to_world = parse_transform(child).cuda()
+            if child.tag == 'ref':
+                shape = shape_group_dict[child.attrib['id']]
+        # transform instance
+        vertices = shape.vertices
+        normals = shape.normals
+        vertices = torch.cat((vertices, torch.ones(vertices.shape[0], 1).cuda()), dim = 1)
+        vertices = vertices @ torch.transpose(to_world, 0, 1)
+        vertices = vertices / vertices[:, 3:4]
+        vertices = vertices[:, 0:3].contiguous()
+        if normals is not None:
+            normals = normals @ (torch.inverse(torch.transpose(to_world, 0, 1))[:3, :3])
+            normals = normals.contiguous()
+        # assert(vertices is not None)
+        # assert(indices is not None)
+        # lgt = None
+        # if light_intensity is not None:
+        #     lgt = pyredner.AreaLight(shape_id, light_intensity)
+
+        # if pyredner.get_use_gpu():
+        #     # Copy to GPU
+        #     vertices = vertices.cuda()
+        #     indices = indices.cuda()
+        #     if uvs is not None:
+        #         uvs = uvs.cuda()
+        #     if normals is not None:
+        #         normals = normals.cuda()
+        return pyredner.Shape(vertices, shape.indices, shape.uvs, normals, shape.material_id), None
     else:
         print('Shape type {} is not supported!'.format(node.attrib['type']))
         assert(False)
@@ -317,6 +351,8 @@ def parse_scene(node):
     material_dict = {}
     shapes = []
     lights = []
+    shape_group_dict = {}
+
     for child in node:
         if child.tag == 'sensor':
             cam = parse_camera(child)
@@ -325,8 +361,12 @@ def parse_scene(node):
             if node_id is not None:
                 material_dict[node_id] = len(materials)
                 materials.append(material)
+        elif child.tag == 'shape' and child.attrib['type'] == 'shapegroup':
+            for child_s in child:
+                if child_s.tag == 'shape':
+                    shape_group_dict[child.attrib['id']] = parse_shape(child_s, material_dict, None)[0]
         elif child.tag == 'shape':
-            shape, light = parse_shape(child, material_dict, len(shapes))
+            shape, light = parse_shape(child, material_dict, len(shapes), shape_group_dict if child.attrib['type'] == 'instance' else None)
             shapes.append(shape)
             print(len(shapes))
             if light is not None:
