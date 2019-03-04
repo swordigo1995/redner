@@ -103,7 +103,7 @@ def load_obj(filename, obj_group = True, is_load_mtl = True):
                 normals = []
                 uvs = []
                 vertices_map = {}
-            if is_load_mtl:
+            if not is_load_mtl:
                 continue
             mtl_name = splitted[1]
             current_material_name = mtl_name

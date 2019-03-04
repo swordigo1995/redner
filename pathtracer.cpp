@@ -1993,7 +1993,7 @@ void render(const Scene &scene,
                                   light_points,
                                   nee_rays);
             occluded(scene, active_pixels, nee_rays, optix_rays, optix_hits);
-            std::cout << "debug1";
+            std::cout << "debug1" << std::endl;
             
             // Sample directions based on BRDF
             sampler.next_bsdf_samples(bsdf_samples);
@@ -2008,6 +2008,8 @@ void render(const Scene &scene,
                         next_rays,
                         bsdf_ray_differentials,
                         next_min_roughness);
+            std::cout << "debug11" << std::endl;
+            
             // Intersect with the scene
             intersect(scene,
                       active_pixels,
@@ -2018,6 +2020,7 @@ void render(const Scene &scene,
                       next_ray_differentials,
                       optix_rays,
                       optix_hits);
+            std::cout << "debug111" << std::endl;
 
             // Compute path contribution & update throughput
             accumulate_path_contribs(
@@ -2039,6 +2042,7 @@ void render(const Scene &scene,
                 next_throughputs,
                 rendered_image.get(),
                 BufferView<Real>());
+            std::cout << "debug1111" << std::endl;
  
             // Stream compaction: remove invalid bsdf intersections
             // active_pixels -> next_active_pixels
@@ -2047,6 +2051,8 @@ void render(const Scene &scene,
             // Record the number of active pixels for next depth
             num_active_pixels[depth + 1] = next_active_pixels.size();
         }
+        std::cout << "debug2" << std::endl;
+
         if (d_rendered_image.get() != nullptr) {
             bool first = true;
              // Traverse the path backward for the derivatives
@@ -2464,6 +2470,7 @@ void render(const Scene &scene,
                 std::swap(path_buffer.d_next_ray_differentials, path_buffer.d_ray_differentials);
                 std::swap(path_buffer.d_next_points, path_buffer.d_points);
             }
+            std::cout << "debug3" << std::endl;
             
             // Backpropagate from first vertex to camera
             // Buffer view for first intersection
