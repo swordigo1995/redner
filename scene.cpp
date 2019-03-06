@@ -414,6 +414,7 @@ void intersect_shape(const Shape *shapes,
                      BufferView<Intersection> isects,
                      BufferView<SurfacePoint> points,
                      BufferView<RayDifferential> new_ray_differentials) {
+    std::cout << "intersect_shape" << std::endl;
     auto block_size = 64;
     auto block_count = idiv_ceil(active_pixels.size(), block_size);
     intersect_shape_kernel<<<block_count, block_size>>>(
@@ -458,7 +459,10 @@ void intersect(const Scene &scene,
                        RTP_BUFFER_TYPE_CUDA_LINEAR,
                        optix_hits.data);
         // XXX: should use watertight intersection here?
+        std::cout << "Scene::intersect" << std::endl;
+
         query->execute(0);
+        std::cout << "query" <<std::endl;
         intersect_shape(scene.shapes.data,
                         active_pixels,
                         optix_hits,
