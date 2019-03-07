@@ -5,7 +5,8 @@ import torch
 # Optimize light translation to match shadow
 
 # Use GPU if available
-pyredner.set_use_gpu(torch.cuda.is_available())
+# pyredner.set_use_gpu(torch.cuda.is_available())
+pyredner.set_use_gpu(False)
 
 # Set up the scene using Pytorch tensor
 position = torch.tensor([0.0, 2.0, -5.0])

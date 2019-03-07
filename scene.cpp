@@ -223,6 +223,11 @@ Scene::Scene(const Camera &camera,
             light_cdf[i] = light_cdf[i - 1] + light_pmf[i - 1];
         }
     }
+    else
+    {
+        std::cout << "Warning:: no light sources in the Scene" << std::endl;
+    }
+    
 
     // Flatten the scene into array
     if (shapes.size() > 0) {
