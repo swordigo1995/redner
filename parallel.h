@@ -61,7 +61,7 @@ inline void parallel_for(T functor,
                          int count,
                          bool use_gpu,
                          int work_per_thread = -1) {
-    std::cout << "parallel_for!!!" << std::endl;
+    // std::cout << "parallel_for!!!" << std::endl;
     if (work_per_thread == -1) {
         work_per_thread = use_gpu ? 64 : 256;
     }

@@ -23,6 +23,25 @@
                     "ignoreFailures": true
                 }
             ]
+        },
+        {
+            "name": "(gdb) Launch KJL",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/home/swordigo/.conda/envs/redner/bin/python",
+            "args": ["/home/swordigo/Desktop/LightDesign/Optimization/redner_opt/test.py"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
         }
     ]
 }

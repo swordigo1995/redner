@@ -30,8 +30,25 @@ class Texture:
                 # Pad for circular boundary condition
                 # This is slow. The hope is at some point PyTorch will support
                 # circular boundary condition for conv2d
-                prev_lvl = torch.cat([prev_lvl, prev_lvl[:,:,0:dilation_size]], dim=2)
-                prev_lvl = torch.cat([prev_lvl, prev_lvl[:,:,:,0:dilation_size]], dim=3)
+                if prev_lvl.shape[2] < dilation_size:
+                    cnt = dilation_size // prev_lvl.shape[2]
+                    pad = dilation_size % prev_lvl.shape[2]
+                    for i in range(cnt):
+                        prev_lvl = torch.cat([prev_lvl, prev_lvl[:, :, 0:dilation_size]], dim=2)
+                    prev_lvl = torch.cat([prev_lvl, prev_lvl[:,:,0:pad]], dim=2)
+                else:
+                    prev_lvl = torch.cat([prev_lvl, prev_lvl[:,:,0:dilation_size]], dim=2)
+
+                if prev_lvl.shape[3] < dilation_size:
+                    cnt = dilation_size // prev_lvl.shape[3]
+                    pad = dilation_size % prev_lvl.shape[3]
+                    for i in range(cnt):
+                        prev_lvl = torch.cat([prev_lvl, prev_lvl[:,:,:, 0:dilation_size]], dim=3)
+                    prev_lvl = torch.cat([prev_lvl, prev_lvl[:,:,:,0:pad]], dim=3)
+                else:
+                    prev_lvl = torch.cat([prev_lvl, prev_lvl[:,:,:,0:dilation_size]], dim=3)
+
+                # prev_lvl = torch.cat([prev_lvl, prev_lvl[:,:,:,0:dilation_size]], dim=3)
                 current_lvl = torch.nn.functional.conv2d(\
                     prev_lvl, box_filter,
                     dilation = dilation_size,

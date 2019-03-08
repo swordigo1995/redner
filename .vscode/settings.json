@@ -54,6 +54,7 @@
         "utility": "cpp",
         "valarray": "cpp",
         "variant": "cpp",
-        "*.cuh": "cpp"
+        "*.cuh": "cpp",
+        "bitset": "cpp"
     }
 }

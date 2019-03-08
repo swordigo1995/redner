@@ -53,10 +53,15 @@ def imread(filename):
         blue.shape = (size[1], size[0]) 
         return torch.from_numpy(np.stack([red, green, blue], axis=-1).astype(np.float32))
     else:
-        im = skimage.io.imread(filename)
-        if im.ndim == 2:
-            im = np.stack([im, im, im], axis=-1)
-        elif im.shape[2] == 4:
-            im = im[:, :, :3]
-        return torch.from_numpy(np.power(\
-            skimage.img_as_float(im).astype(np.float32), 2.2))
+        try:
+            im = skimage.io.imread(filename)
+        except OSError as err:
+            print('Unsupported image format {}'.format(filename[-4:]))
+            raise
+        else:
+            if im.ndim == 2:
+                im = np.stack([im, im, im], axis=-1)
+            elif im.shape[2] == 4:
+                im = im[:, :, :3]
+            return torch.from_numpy(np.power(\
+                skimage.img_as_float(im).astype(np.float32), 2.2))

@@ -1899,6 +1899,7 @@ void render(const Scene &scene,
 
     // For each sample
     for (int sample_id = 0; sample_id < options.num_samples; sample_id++) {
+        std::cout << "sample_id" << sample_id << std::endl;
         // Buffer view for first intersection
         auto throughputs = path_buffer.throughputs.view(0, num_pixels);
         auto camera_samples = path_buffer.camera_samples.view(0, num_pixels);
@@ -1981,7 +1982,7 @@ void render(const Scene &scene,
             auto min_roughness = path_buffer.min_roughness.view(depth * num_pixels, num_pixels);
             auto next_min_roughness =
                 path_buffer.min_roughness.view((depth + 1) * num_pixels, num_pixels);
-            std::cout << "debug0" << std::endl;
+            // std::cout << "debug0" << std::endl;
 
             // Sample points on lights
             sampler.next_light_samples(light_samples);
@@ -1993,7 +1994,7 @@ void render(const Scene &scene,
                                   light_points,
                                   nee_rays);
             occluded(scene, active_pixels, nee_rays, optix_rays, optix_hits);
-            std::cout << "debug1" << std::endl;
+            // std::cout << "debug1" << std::endl;
             
             // Sample directions based on BRDF
             sampler.next_bsdf_samples(bsdf_samples);
@@ -2008,7 +2009,6 @@ void render(const Scene &scene,
                         next_rays,
                         bsdf_ray_differentials,
                         next_min_roughness);
-            std::cout << "debug11" << std::endl;
             
             // Intersect with the scene
             intersect(scene,
@@ -2020,7 +2020,6 @@ void render(const Scene &scene,
                       next_ray_differentials,
                       optix_rays,
                       optix_hits);
-            std::cout << "debug111" << std::endl;
 
             // Compute path contribution & update throughput
             accumulate_path_contribs(
@@ -2042,7 +2041,7 @@ void render(const Scene &scene,
                 next_throughputs,
                 rendered_image.get(),
                 BufferView<Real>());
-            std::cout << "debug1111" << std::endl;
+            // std::cout << "debug1111" << std::endl;
  
             // Stream compaction: remove invalid bsdf intersections
             // active_pixels -> next_active_pixels
@@ -2051,7 +2050,7 @@ void render(const Scene &scene,
             // Record the number of active pixels for next depth
             num_active_pixels[depth + 1] = next_active_pixels.size();
         }
-        std::cout << "debug2" << std::endl;
+        // std::cout << "debug2" << std::endl;
 
         if (d_rendered_image.get() != nullptr) {
             bool first = true;
@@ -2470,7 +2469,7 @@ void render(const Scene &scene,
                 std::swap(path_buffer.d_next_ray_differentials, path_buffer.d_ray_differentials);
                 std::swap(path_buffer.d_next_points, path_buffer.d_points);
             }
-            std::cout << "debug3" << std::endl;
+            // std::cout << "debug3" << std::endl;
             
             // Backpropagate from first vertex to camera
             // Buffer view for first intersection
