@@ -1,11 +1,11 @@
-<?xml version="1.0" encoding="utf-8"?>
-
+<?xml version='1.0' encoding='utf-8'?>
 <!--
 
 	Automatically converted from Wavefront OBJ
 
 -->
-<scene version="0.6.0">
+
+<scene version="0.5.0">
 	<integrator type="path">
 		<integer name="maxDepth" value="3"/>
 	</integrator>
@@ -36,7 +36,8 @@
 	<bsdf type="diffuse" id="teapot_material">
 		<rgb name="reflectance" value="0.64 0.64 0.64"/>
 	</bsdf>
-	<!-- 	<bsdf type="roughconductor" id="teapot_material">
+
+<!-- 	<bsdf type="roughconductor" id="teapot_material">
 		<string name="material" value="none"/>
 		<float name="alpha" value="0.01"/>
 		<string name="distribution" value="phong"/>

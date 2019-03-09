@@ -382,6 +382,7 @@ def parse_scene(node):
             # read envmap params from xml
             scale = 1.0
             envmap_filename = None
+            to_world = torch.eye(4)
             for child_s in child:
                 if child_s.attrib['name'] == 'scale':
                     assert child_s.tag == 'float'
@@ -389,11 +390,13 @@ def parse_scene(node):
                 if child_s.attrib['name'] == 'filename':
                     assert child_s.tag == 'string'
                     envmap_filename = child_s.attrib['value']
+                if child_s.attrib['name'] == 'toWorld':
+                    to_world = parse_transform(child_s)
             # load envmap
             envmap = scale * pyredner.imread(envmap_filename)
             if pyredner.get_use_gpu():
                 envmap = envmap.cuda()
-            envmap = pyredner.EnvironmentMap(envmap)
+            envmap = pyredner.EnvironmentMap(envmap, env_to_world=to_world)
     return pyredner.Scene(cam, shapes, materials, lights, envmap)
 
 def load_mitsuba(filename):

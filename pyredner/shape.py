@@ -67,5 +67,7 @@ class Shape:
         self.indices = indices
         self.uvs = uvs
         self.normals = normals
+        if material_id < 0:
+            raise ValueError('material is not specified')
         self.material_id = material_id
         self.light_id = -1

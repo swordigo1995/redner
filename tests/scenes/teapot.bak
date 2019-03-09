@@ -1,17 +1,17 @@
-<?xml version="1.0" encoding="utf-8"?>
-
+<?xml version='1.0' encoding='utf-8'?>
 <!--
 
 	Automatically converted from Wavefront OBJ
 
 -->
-<scene version="0.6.0">
+
+<scene version="0.5.0">
 	<integrator type="direct"/>
 
 	<bsdf type="diffuse" id="Floor_material">
-		<texture name="reflectance" type="bitmap">
-			<string name="filename" value="textures/default.png"/>
-			<string name="filterType" value="trilinear"/>
+ 		<texture name="reflectance" type="bitmap" >
+			<string name="filename" value="textures/default.png" />
+			<string name="filterType" value="trilinear" />
 			<float name="uscale" value="10"/>
 			<float name="vscale" value="10"/>
 		</texture>
@@ -36,7 +36,6 @@
 	<shape type="serialized" id="teapot_mesh">
 		<string name="filename" value="teapot.serialized"/>
 		<integer name="shapeIndex" value="0"/>
-
 		<ref name="bsdf" id="Floor_material"/>
 	</shape>
 
@@ -45,7 +44,6 @@
 		<integer name="shapeIndex" value="1"/>
 
 		<ref name="bsdf" id="Light0_material"/>
-
 		<emitter type="area">
 			<spectrum name="radiance" value="8.0 8.0 8.0"/>
 		</emitter>
@@ -56,7 +54,6 @@
 		<integer name="shapeIndex" value="4"/>
 
 		<ref name="bsdf" id="Light1_material"/>
-
 		<emitter type="area">
 			<spectrum name="radiance" value="8.0 8.0 8.0"/>
 		</emitter>
@@ -67,7 +64,6 @@
 		<integer name="shapeIndex" value="5"/>
 
 		<ref name="bsdf" id="Light2_material"/>
-
 		<emitter type="area">
 			<spectrum name="radiance" value="16.0 16.0 16.0"/>
 		</emitter>
@@ -86,6 +82,7 @@
 
 		<ref name="bsdf" id="teapot_material"/>
 	</shape>
+
 
 	<sensor type="perspective">
 		<float name="farClip" value="237.278"/>
