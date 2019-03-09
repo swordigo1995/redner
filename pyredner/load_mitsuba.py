@@ -77,7 +77,7 @@ def parse_camera(node):
                            resolution   = resolution)
 
 def parse_material(node, two_sided = False):
-    def parse_bitmap(node, scale = None):
+    def parse_material_bitmap(node, scale = None):
         reflectance_texture = None
         uv_scale = torch.tensor([1.0, 1.0])
         for grandchild in node:
@@ -92,6 +92,22 @@ def parse_material(node, two_sided = False):
         assert reflectance_texture is not None
         return reflectance_texture, uv_scale
         
+    def parse_texture(node):
+        if node.attrib['type'] == 'scale':
+            scale_value = None
+            for grandchild in node:
+                if grandchild.attrib['name'] == 'scale' and grandchild.tag == 'float':
+                    scale_value = float(grandchild.attrib['value'])
+                elif grandchild.attrib['type'] == 'bitmap' and grandchild.tag == 'texture':
+                    assert scale_value is not None # avoid 'scale' element is declarate below the 'bitmap'
+                    return parse_material_bitmap(grandchild, scale_value)
+                else:
+                    raise NotImplementedError('Unsupported scale param type {}'.format(grandchild.child['type']))
+        elif node.attrib['type'] == 'bitmap':
+            return parse_material_bitmap(node)
+        else:
+            raise NotImplementedError('Unsupported Texture type {}'.format(node.attrib['type']))
+    
     node_id = None
     if 'id' in node.attrib:
         node_id = node.attrib['id']
@@ -104,24 +120,12 @@ def parse_material(node, two_sided = False):
         for child in node:
             if child.attrib['name'] == 'reflectance':
                 if child.tag == 'texture':
-                    for grandchild in child:
-                        if grandchild.attrib['name'] == 'filename':
-                            diffuse_reflectance = pyredner.imread(grandchild.attrib['value'])
-                        elif grandchild.attrib['name'] == 'uscale':
-                            diffuse_uv_scale[0] = float(grandchild.attrib['value'])
-                        elif grandchild.attrib['name'] == 'vscale':
-                            diffuse_uv_scale[1] = float(grandchild.attrib['value'])
+                    diffuse_reflectance, diffuse_uv_scale = parse_texture(child)
                 elif child.tag == 'rgb' or child.tag == 'spectrum':
                     diffuse_reflectance = parse_vector(child.attrib['value'])
             elif child.attrib['name'] == 'specular':
                 if child.tag == 'texture':
-                    for grandchild in child:
-                        if grandchild.attrib['name'] == 'filename':
-                            specular_reflectance = pyredner.imread(grandchild.attrib['value'])
-                        elif grandchild.attrib['name'] == 'uscale':
-                            specular_uv_scale[0] = float(grandchild.attrib['value'])
-                        elif grandchild.attrib['name'] == 'vscale':
-                            specular_uv_scale[1] = float(grandchild.attrib['value'])
+                    specular_reflectance, specular_uv_scale = parse_texture(child)
                 elif child.tag == 'rgb' or child.tag == 'spectrum':
                     specular_reflectance = parse_vector(child.attrib['value'])
             elif child.attrib['name'] == 'roughness':
@@ -146,37 +150,19 @@ def parse_material(node, two_sided = False):
 
         for child in node:
             if child.attrib['name'] == 'diffuseReflectance':
-                scale
-                if child.tag == 'texture' and child.attrib['type'] == 'bitmap':
-                    for grandchild in child:
-                        if grandchild.attrib['name'] == 'filename':
-                            diffuse_reflectance = pyredner.imread(grandchild.attrib['value'])
-                        elif grandchild.attrib['name'] == 'uscale':
-                            diffuse_uv_scale[0] = float(grandchild.attrib['value'])
-                        elif grandchild.attrib['name'] == 'vscale':
-                            diffuse_uv_scale[1] = float(grandchild.attrib['value'])
+                if child.tag == 'texture':
+                    diffuse_reflectance, diffuse_uv_scale = parse_texture(child)
                 elif child.tag == 'rgb' or child.tag == 'spectrum':
                     diffuse_reflectance = parse_vector(child.attrib['value'])
             elif child.attrib['name'] == 'specularReflectance':
                 if child.tag == 'texture':
-                    for grandchild in child:
-                        if grandchild.attrib['name'] == 'filename':
-                            specular_reflectance = pyredner.imread(grandchild.attrib['value'])
-                        elif grandchild.attrib['name'] == 'uscale':
-                            specular_uv_scale[0] = float(grandchild.attrib['value'])
-                        elif grandchild.attrib['name'] == 'vscale':
-                            specular_uv_scale[1] = float(grandchild.attrib['value'])
+                    specular_reflectance, specular_uv_scale = parse_texture(child)
                 elif child.tag == 'rgb' or child.tag == 'spectrum':
                     specular_reflectance = parse_vector(child.attrib['value'])
             elif child.attrib['name'] == 'alpha':
                 if child.tag == 'texture':
-                    for grandchild in child:
-                        if grandchild.attrib['name'] == 'filename':
-                            roughness = 1 - pyredner.imread(grandchild.attrib['value'])
-                        elif grandchild.attrib['name'] == 'uscale':
-                            roughness_uv_scale[0] = float(grandchild.attrib['value'])
-                        elif grandchild.attrib['name'] == 'vscale':
-                            roughness_uv_scale[1] = float(grandchild.attrib['value'])
+                    glossness, roughness_uv_scale = parse_texture(child) #! For KJL scene only
+                    roughness = 1 - glossness
                 elif child.tag == 'float':
                     alpha = float(child.attrib['value'])
                     roughness = torch.tensor([alpha * alpha])
