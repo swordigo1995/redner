@@ -50,6 +50,19 @@ def load_mtl(filename):
         mtllib[current_mtl.name] = current_mtl
     return mtllib
 
+def create_mesh(indices, vertices, normals, uvs):
+    indices = torch.tensor(indices, dtype = torch.int32, device = pyredner.get_device())
+    vertices = torch.tensor(vertices, device = pyredner.get_device())
+    if len(uvs) == 0:
+        uvs = None
+    else:
+        uvs = torch.tensor(uvs, device = pyredner.get_device())
+    if len(normals) == 0:
+        normals = None
+    else:
+        normals = torch.tensor(normals, device = pyredner.get_device())
+    return TriangleMesh(vertices, indices, uvs, normals)
+    
 def load_obj(filename, obj_group = True, is_load_mtl = True):
     """
         Load from a Wavefront obj file as PyTorch tensors.
@@ -67,19 +80,6 @@ def load_obj(filename, obj_group = True, is_load_mtl = True):
     material_map = {}
     current_mtllib = {}
     current_material_name = None
-
-    def create_mesh(indices, vertices, normals, uvs):
-        indices = torch.tensor(indices, dtype = torch.int32, device = pyredner.get_device())
-        vertices = torch.tensor(vertices, device = pyredner.get_device())
-        if len(uvs) == 0:
-            uvs = None
-        else:
-            uvs = torch.tensor(uvs, device = pyredner.get_device())
-        if len(normals) == 0:
-            normals = None
-        else:
-            normals = torch.tensor(normals, device = pyredner.get_device())
-        return TriangleMesh(vertices, indices, uvs, normals)
 
     mesh_list = []
     light_map = {}
@@ -191,3 +191,80 @@ def load_obj(filename, obj_group = True, is_load_mtl = True):
     if d != '':
         os.chdir(cwd)
     return material_map, mesh_list, light_map
+
+# Load obj using tinyobjloader (https://github.com/syoyo/tinyobjloader)
+import tinyobjloader as tol
+def load_obj_fast(filename, obj_group = True, is_load_mtl = True):
+    vertices_pool = []
+    uvs_pool = []
+    normals_pool = []
+    indices = []
+    vertices = []
+    normals = []
+    uvs = []
+    vertices_map = {}
+    material_map = {}
+    current_mtllib = {}
+    current_material_name = None
+    
+    d = os.path.dirname(filename)
+    cwd = os.getcwd()
+    if d != '':
+        os.chdir(d)
+    model = tol.LoadObj(filename)
+    mesh_list = []
+    
+    # Fill pools
+    def reFormat(pool):
+        return [[pool[3*i+0], pool[3*i+1], pool[3*i+2]] for i in range(len(pool)//3)]
+    
+    vertices_pool = model['attribs']['vertices']
+    uvs_pool = model['attribs']['texcoords']
+    normals_pool = model['attribs']['normals']
+
+    def get_vertex_id(pi, ni, uvi):
+        key = (pi, uvi, ni)
+        if key in vertices_map:
+            return vertices_map[key]
+
+        vertex_id = len(vertices)
+        vertices_map[key] = vertex_id
+        vertices.append(vertices_pool[pi])
+        if uvi is not None:
+            uvs.append(uvs_pool[uvi])
+        if ni is not None:
+            normals.append(normals_pool[ni])
+        return vertex_id
+
+    for name, val in model['shapes'].items():
+        print(name)
+        indices_flatten = val['indices']
+        triangle_ptr = 0
+        for tri_idx, num_vertices in enumerate(val['num_face_vertices']):
+            vids = []
+            for v in range(num_vertices):
+                vertex_base = triangle_ptr + v * 3
+                v, vn, vt = indices_flatten[vertex_base + 0], indices_flatten[vertex_base + 1], indices_flatten[vertex_base + 2]
+                vids.append(get_vertex_id(v, vn, vt))
+            indices.append(vids[0:3])
+            if len(vids) == 4:
+                indices.append([vids[0], vids[2], vids[3]])
+            elif len(vids) > 4:
+                raise ValueError(len(vids))
+            triangle_ptr = triangle_ptr + num_vertices * 3
+
+        mesh_list.append((current_material_name, create_mesh(indices, reFormat(vertices), reFormat(normals), reFormat(uvs))))
+        indices = []
+        vertices = []
+        normals = []
+        uvs = []
+        vertices_map = {}
+    
+    if d != '':
+        os.chdir(cwd)
+    # return material_map, mesh_list, light_map
+
+if __name__ == "__main__":
+    # test
+    # load_obj('/home/swordigo/Desktop/LightDesign/3d_dataset/samples/kjl/3FO4MG33HT86/scene/models_baked.obj', is_load_mtl=False)
+    load_obj_fast('/home/swordigo/Desktop/LightDesign/3d_dataset/samples/kjl/3FO4MG33HT86/scene/models_baked.obj')
