@@ -220,7 +220,7 @@ def parse_shape(node, material_dict, shape_id, shape_group_dict = None):
                                           light_intensity[0]])
 
         if node.attrib['type'] == 'obj':
-            _, mesh_list, _ = pyredner.load_obj(filename, is_load_mtl=False)
+            _, mesh_list, _ = pyredner.load_obj_fast(filename, is_load_mtl=False)
             vertices = mesh_list[0][1].vertices.cpu()
             indices = mesh_list[0][1].indices.cpu()
             uvs = mesh_list[0][1].uvs

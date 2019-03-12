@@ -206,21 +206,24 @@ def load_obj_fast(filename, obj_group = True, is_load_mtl = True):
     material_map = {}
     current_mtllib = {}
     current_material_name = None
+
+    mesh_list = []
+    model = tol.LoadObj(filename)
     
     d = os.path.dirname(filename)
     cwd = os.getcwd()
     if d != '':
         os.chdir(d)
-    model = tol.LoadObj(filename)
-    mesh_list = []
     
     # Fill pools
-    def reFormat(pool):
-        return [[pool[3*i+0], pool[3*i+1], pool[3*i+2]] for i in range(len(pool)//3)]
+    def reFormat(pool, group_size = 3):
+        return [[pool[group_size*i+j] for j in range(group_size)] for i in range(len(pool)//group_size)]
     
-    vertices_pool = model['attribs']['vertices']
-    uvs_pool = model['attribs']['texcoords']
-    normals_pool = model['attribs']['normals']
+    vertices_pool = reFormat(model['attribs']['vertices'])
+    uvs_pool = reFormat(model['attribs']['texcoords'], 2)
+    normals_pool = reFormat(model['attribs']['normals'])
+    if len(vertices_pool) == 0:
+        raise NameError('Read file {} failed.'.format(filename))
 
     def get_vertex_id(pi, ni, uvi):
         key = (pi, uvi, ni)
@@ -253,7 +256,7 @@ def load_obj_fast(filename, obj_group = True, is_load_mtl = True):
                 raise ValueError(len(vids))
             triangle_ptr = triangle_ptr + num_vertices * 3
 
-        mesh_list.append((current_material_name, create_mesh(indices, reFormat(vertices), reFormat(normals), reFormat(uvs))))
+        mesh_list.append((current_material_name, create_mesh(indices, vertices, normals, uvs)))
         indices = []
         vertices = []
         normals = []
