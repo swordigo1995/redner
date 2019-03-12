@@ -221,14 +221,41 @@ def parse_shape(node, material_dict, shape_id, shape_group_dict = None):
 
         if node.attrib['type'] == 'obj':
             _, mesh_list, _ = pyredner.load_obj_fast(filename, is_load_mtl=False)
-            vertices = mesh_list[0][1].vertices.cpu()
-            indices = mesh_list[0][1].indices.cpu()
-            uvs = mesh_list[0][1].uvs
-            normals = mesh_list[0][1].normals
-            if uvs is not None:
-                uvs = uvs.cpu()
-            if normals is not None:
-                normals = normals.cpu()
+            shape_list = []
+            for mesh in mesh_list:
+                vertices = mesh[1].vertices.cpu()
+                indices = mesh[1].indices.cpu()
+                uvs = mesh[1].uvs
+                normals = mesh[1].normals
+                if uvs is not None:
+                    uvs = uvs.cpu()
+                if normals is not None:
+                    normals = normals.cpu()
+
+                # Transform the vertices and normals
+                vertices = torch.cat((vertices, torch.ones(vertices.shape[0], 1)), dim=1)
+                vertices = vertices @ torch.transpose(to_world, 0, 1)
+                vertices = vertices / vertices[:, 3:4]
+                vertices = vertices[:, 0:3].contiguous()
+                if normals is not None:
+                    normals = normals @ (torch.inverse(torch.transpose(to_world, 0, 1))[:3, :3])
+                    normals = normals.contiguous()
+                assert (vertices is not None)
+                assert (indices is not None)
+                lgt = None
+                if light_intensity is not None:
+                    lgt = pyredner.AreaLight(shape_id, light_intensity)
+
+                if pyredner.get_use_gpu():
+                    # Copy to GPU
+                    vertices = vertices.cuda()
+                    indices = indices.cuda()
+                    if uvs is not None:
+                        uvs = uvs.cuda()
+                    if normals is not None:
+                        normals = normals.cuda()
+                shape_list.append(pyredner.Shape(vertices, indices, uvs, normals, mat_id))
+            return shape_list, lgt
         else:
             assert(node.attrib['type'] == 'serialized')
             mitsuba_tri_mesh = redner.load_serialized(filename, serialized_shape_id)
@@ -241,29 +268,29 @@ def parse_shape(node, material_dict, shape_id, shape_group_dict = None):
             if normals.shape[0] == 0:
                 normals = None
 
-        # Transform the vertices and normals
-        vertices = torch.cat((vertices, torch.ones(vertices.shape[0], 1)), dim = 1)
-        vertices = vertices @ torch.transpose(to_world, 0, 1)
-        vertices = vertices / vertices[:, 3:4]
-        vertices = vertices[:, 0:3].contiguous()
-        if normals is not None:
-            normals = normals @ (torch.inverse(torch.transpose(to_world, 0, 1))[:3, :3])
-            normals = normals.contiguous()
-        assert(vertices is not None)
-        assert(indices is not None)
-        lgt = None
-        if light_intensity is not None:
-            lgt = pyredner.AreaLight(shape_id, light_intensity)
-
-        if pyredner.get_use_gpu():
-            # Copy to GPU
-            vertices = vertices.cuda()
-            indices = indices.cuda()
-            if uvs is not None:
-                uvs = uvs.cuda()
+            # Transform the vertices and normals
+            vertices = torch.cat((vertices, torch.ones(vertices.shape[0], 1)), dim = 1)
+            vertices = vertices @ torch.transpose(to_world, 0, 1)
+            vertices = vertices / vertices[:, 3:4]
+            vertices = vertices[:, 0:3].contiguous()
             if normals is not None:
-                normals = normals.cuda()
-        return pyredner.Shape(vertices, indices, uvs, normals, mat_id), lgt
+                normals = normals @ (torch.inverse(torch.transpose(to_world, 0, 1))[:3, :3])
+                normals = normals.contiguous()
+            assert(vertices is not None)
+            assert(indices is not None)
+            lgt = None
+            if light_intensity is not None:
+                lgt = pyredner.AreaLight(shape_id, light_intensity)
+
+            if pyredner.get_use_gpu():
+                # Copy to GPU
+                vertices = vertices.cuda()
+                indices = indices.cuda()
+                if uvs is not None:
+                    uvs = uvs.cuda()
+                if normals is not None:
+                    normals = normals.cuda()
+            return pyredner.Shape(vertices, indices, uvs, normals, mat_id), lgt
     elif node.attrib['type'] == 'rectangle':
         indices = torch.tensor([[0, 2, 1], [1, 2, 3]],
                                dtype = torch.int32)
@@ -374,7 +401,10 @@ def parse_scene(node):
                     shape_group_dict[child.attrib['id']] = parse_shape(child_s, material_dict, None)[0]
         elif child.tag == 'shape':
             shape, light = parse_shape(child, material_dict, len(shapes), shape_group_dict if child.attrib['type'] == 'instance' else None)
-            shapes.append(shape)
+            if isinstance(shape, list):
+                shapes = shapes + shape
+            else:
+                shapes.append(shape)
             if light is not None:
                 lights.append(light)
         # Add envmap loading support
