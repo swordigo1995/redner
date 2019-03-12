@@ -208,6 +208,7 @@ def load_obj_fast(filename, obj_group = True, is_load_mtl = True):
     current_material_name = None
 
     mesh_list = []
+    light_map = {}
     model = tol.LoadObj(filename)
     
     d = os.path.dirname(filename)
@@ -233,9 +234,9 @@ def load_obj_fast(filename, obj_group = True, is_load_mtl = True):
         vertex_id = len(vertices)
         vertices_map[key] = vertex_id
         vertices.append(vertices_pool[pi])
-        if uvi is not None:
+        if uvi is not None and uvi >= 0:
             uvs.append(uvs_pool[uvi])
-        if ni is not None:
+        if ni is not None and ni >= 0:
             normals.append(normals_pool[ni])
         return vertex_id
 
@@ -265,7 +266,7 @@ def load_obj_fast(filename, obj_group = True, is_load_mtl = True):
     
     if d != '':
         os.chdir(cwd)
-    # return material_map, mesh_list, light_map
+    return material_map, mesh_list, light_map
 
 if __name__ == "__main__":
     # test
