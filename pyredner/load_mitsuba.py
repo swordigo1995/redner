@@ -254,6 +254,9 @@ def parse_shape(node, material_dict, shape_id, shape_group_dict = None):
                         uvs = uvs.cuda()
                     if normals is not None:
                         normals = normals.cuda()
+                # Assign material
+                if mesh[0] != '':
+                    mat_id = material_dict[mesh[0]]
                 shape_list.append(pyredner.Shape(vertices, indices, uvs, normals, mat_id))
             return shape_list, lgt
         else:

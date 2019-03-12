@@ -242,6 +242,7 @@ def load_obj_fast(filename, obj_group = True, is_load_mtl = True):
 
     for name, val in model['shapes'].items():
         print(name)
+        current_material_name = name
         indices_flatten = val['indices']
         triangle_ptr = 0
         for tri_idx, num_vertices in enumerate(val['num_face_vertices']):
