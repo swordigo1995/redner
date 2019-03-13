@@ -1895,11 +1895,11 @@ void render(const Scene &scene,
     auto optix_hits = path_buffer.optix_hits.view(0, 2 * num_pixels);
 
     ThrustCachedAllocator thrust_alloc(scene.use_gpu, num_pixels * sizeof(DTexture3));
-    std::cout << "Allocate complete!" << std::endl;
+    // std::cout << "Allocate complete!" << std::endl;
 
     // For each sample
     for (int sample_id = 0; sample_id < options.num_samples; sample_id++) {
-        std::cout << "sample_id" << sample_id << std::endl;
+        // std::cout << "sample_id" << sample_id << std::endl;
         // Buffer view for first intersection
         auto throughputs = path_buffer.throughputs.view(0, num_pixels);
         auto camera_samples = path_buffer.camera_samples.view(0, num_pixels);
