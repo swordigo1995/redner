@@ -5,6 +5,7 @@ pydelta/__pycache__
 .cache
 tests/results
 tests/results_bak
+tests/.idea
 tutorials/results
 examples/results
 debug.exr

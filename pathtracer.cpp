@@ -157,7 +157,7 @@ struct primary_contribs_accumulator {
         const auto &incoming_ray = incoming_rays[pixel_id];
         Vector3 emission = Vector3{0, 0, 0};
         if (shading_isect.valid()) {
-            const auto &shading_point = shading_points[pixel_id];
+            /*const auto &shading_point = shading_points[pixel_id];
             const auto &shading_shape = scene.shapes[shading_isect.shape_id];
             auto wi = -incoming_ray.dir;
             if (shading_shape.light_id >= 0) {
@@ -165,7 +165,7 @@ struct primary_contribs_accumulator {
                 if (light.two_sided || dot(wi, shading_point.shading_frame.n) > 0) {
                     emission += light.intensity;
                 }
-            }
+            }*/
         } else if (scene.envmap != nullptr) {
             auto dir = incoming_rays[pixel_id].dir;
             emission = envmap_eval(*(scene.envmap), dir, incoming_ray_differentials[pixel_id]);
@@ -760,17 +760,26 @@ struct bsdf_sampler {
         const auto &incoming_ray = incoming_rays[pixel_id];
         const auto &shading_point = shading_points[pixel_id];
 
-        next_rays[pixel_id] = Ray{
-            shading_points[pixel_id].position,
-            bsdf_sample(
-                material,
-                shading_point,
-                -incoming_ray.dir,
-                bsdf_samples[pixel_id],
-                min_roughness[pixel_id],
-                incoming_ray_differentials[pixel_id],
-                bsdf_ray_differentials[pixel_id],
-                &next_min_roughness[pixel_id])};
+        // Hide area light shape.
+        if (shape.light_id >= 0 && isect.valid()) {
+            next_rays[pixel_id] = Ray{
+                shading_point.position + 1e-8f * incoming_ray.dir, //TODO test for more suitable epsilon
+                incoming_ray.dir
+            };
+        }
+        else {
+            next_rays[pixel_id] = Ray{
+                shading_points[pixel_id].position,
+                bsdf_sample(
+                    material,
+                    shading_point,
+                    -incoming_ray.dir,
+                    bsdf_samples[pixel_id],
+                    min_roughness[pixel_id],
+                    incoming_ray_differentials[pixel_id],
+                    bsdf_ray_differentials[pixel_id],
+                    &next_min_roughness[pixel_id])};
+        }
     }
 
     const FlattenScene scene;
@@ -857,6 +866,10 @@ struct path_contribs_accumulator {
                         auto mis_weight = square(pdf_nee) / (square(pdf_nee) + square(pdf_bsdf));
                         nee_contrib =
                             (mis_weight * geometry_term / pdf_nee) * bsdf_val * light_contrib;
+                        // Ensure don't get lighting when pass through area light.
+                        if (light_shape.light_id == shading_shape.light_id) {
+                            nee_contrib = Vector3{0, 0, 0};
+                        }
                     }
                 }
             } else if (scene.envmap != nullptr) {
@@ -902,7 +915,12 @@ struct path_contribs_accumulator {
                 scatter_bsdf = bsdf_val / pdf_bsdf;
                 next_throughput = throughput * scatter_bsdf;
             } else {
-                next_throughput = Vector3{0, 0, 0};
+                // Add for hide area light. use original throughput as next one.
+                if (shading_shape.light_id >= 0) {
+                    next_throughput = throughput;
+                } else {
+                    next_throughput = Vector3{0, 0, 0};
+                }
             }
         } else if (scene.envmap != nullptr) {
             // Hit environment map
@@ -1918,6 +1936,7 @@ void render(const Scene &scene,
         sampler.next_camera_samples(camera_samples);
         sample_primary_rays(camera, camera_samples, rays, primary_differentials, scene.use_gpu);
         // Initialize pixel id
+        //? Some ray with dir=vec3(0)? use as an inactive flag.
         init_active_pixels(rays, primary_active_pixels, scene.use_gpu, thrust_alloc);
         auto num_actives_primary = (int)primary_active_pixels.size();
         // Intersect with the scene
@@ -1994,7 +2013,6 @@ void render(const Scene &scene,
                                   light_points,
                                   nee_rays);
             occluded(scene, active_pixels, nee_rays, optix_rays, optix_hits);
-            // std::cout << "debug1" << std::endl;
             
             // Sample directions based on BRDF
             sampler.next_bsdf_samples(bsdf_samples);
