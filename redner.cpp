@@ -102,6 +102,7 @@ PYBIND11_MODULE(redner, m) {
     py::class_<AreaLight>(m, "AreaLight")
         .def(py::init<int,
                       ptr<float>,
+                      bool,
                       bool>());
 
     py::class_<DAreaLight>(m, "DAreaLight")

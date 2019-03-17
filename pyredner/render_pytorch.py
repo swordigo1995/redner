@@ -73,6 +73,7 @@ class RenderFunction(torch.autograd.Function):
             args.append(light.shape_id)
             args.append(light.intensity)
             args.append(light.two_sided)
+            args.append(light.hide_shape)
         if scene.envmap is not None:
             args.append(scene.envmap.values.mipmap)
             args.append(scene.envmap.values.uv_scale)
@@ -230,11 +231,13 @@ class RenderFunction(torch.autograd.Function):
             current_index += 1
             two_sided = args[current_index]
             current_index += 1
-
+            hide_shape = args[current_index]
+            current_index += 1
             area_lights.append(redner.AreaLight(\
                 shape_id,
                 redner.float_ptr(intensity.data_ptr()),
-                two_sided))
+                two_sided,
+                hide_shape))
 
         envmap = None
         if args[current_index] is not None:
@@ -498,6 +501,7 @@ class RenderFunction(torch.autograd.Function):
             ret_list.append(None) # shape id
             ret_list.append(d_intensity_list[i].cpu())
             ret_list.append(None) # two sided
+            ret_list.append(None)
 
         if ctx.envmap is not None:
             ret_list.append(d_envmap_values)

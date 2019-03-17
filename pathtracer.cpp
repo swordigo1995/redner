@@ -157,15 +157,15 @@ struct primary_contribs_accumulator {
         const auto &incoming_ray = incoming_rays[pixel_id];
         Vector3 emission = Vector3{0, 0, 0};
         if (shading_isect.valid()) {
-            /*const auto &shading_point = shading_points[pixel_id];
+            const auto &shading_point = shading_points[pixel_id];
             const auto &shading_shape = scene.shapes[shading_isect.shape_id];
             auto wi = -incoming_ray.dir;
             if (shading_shape.light_id >= 0) {
                 const auto &light = scene.area_lights[shading_shape.light_id];
-                if (light.two_sided || dot(wi, shading_point.shading_frame.n) > 0) {
+                if (!light.hide_shape && (light.two_sided || dot(wi, shading_point.shading_frame.n) > 0)) {
                     emission += light.intensity;
                 }
-            }*/
+            }
         } else if (scene.envmap != nullptr) {
             auto dir = incoming_rays[pixel_id].dir;
             emission = envmap_eval(*(scene.envmap), dir, incoming_ray_differentials[pixel_id]);
@@ -761,7 +761,7 @@ struct bsdf_sampler {
         const auto &shading_point = shading_points[pixel_id];
 
         // Hide area light shape.
-        if (shape.light_id >= 0 && isect.valid()) {
+        if (shape.light_id >= 0 && isect.valid() && scene.area_lights[shape.light_id].hide_shape) {
             next_rays[pixel_id] = Ray{
                 shading_point.position + 1e-8f * incoming_ray.dir, //TODO test for more suitable epsilon
                 incoming_ray.dir
@@ -866,10 +866,10 @@ struct path_contribs_accumulator {
                         auto mis_weight = square(pdf_nee) / (square(pdf_nee) + square(pdf_bsdf));
                         nee_contrib =
                             (mis_weight * geometry_term / pdf_nee) * bsdf_val * light_contrib;
-                        // Ensure don't get lighting when pass through area light.
-                        if (light_shape.light_id == shading_shape.light_id) {
-                            nee_contrib = Vector3{0, 0, 0};
-                        }
+                        //? Ensure don't get lighting when pass through area light.
+                        // if (light_shape.light_id == shading_shape.light_id) {
+                        //     nee_contrib = Vector3{0, 0, 0};
+                        // }
                     }
                 }
             } else if (scene.envmap != nullptr) {
@@ -915,11 +915,11 @@ struct path_contribs_accumulator {
                 scatter_bsdf = bsdf_val / pdf_bsdf;
                 next_throughput = throughput * scatter_bsdf;
             } else {
+                next_throughput = Vector3{0, 0, 0};
                 // Add for hide area light. use original throughput as next one.
                 if (shading_shape.light_id >= 0) {
-                    next_throughput = throughput;
-                } else {
-                    next_throughput = Vector3{0, 0, 0};
+                    const auto &light = scene.area_lights[shading_shape.light_id];
+                    if (light.hide_shape) next_throughput = throughput;
                 }
             }
         } else if (scene.envmap != nullptr) {
