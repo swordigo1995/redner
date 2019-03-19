@@ -56,5 +56,6 @@
         "variant": "cpp",
         "*.cuh": "cpp",
         "bitset": "cpp"
-    }
+    },
+    "python.pythonPath": "/home/swordigo/.conda/envs/redner/bin/python"
 }

@@ -29,7 +29,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "/home/swordigo/.conda/envs/redner/bin/python",
-            "args": ["/home/swordigo/Desktop/LightDesign/Optimization/redner_opt/test.py"],
+            "args": ["/home/swordigo/Desktop/LightDesign/Optimization/redner_opt/kjl_scene_test/test_kjl_lighting.py"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

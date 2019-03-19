@@ -31,7 +31,7 @@ void init_paths(BufferView<Vector3> throughputs,
     DISPATCH(use_gpu, thrust::fill,
              min_roughness.begin(),
              min_roughness.end(),
-             Real(0));
+             Real(0.01));//TODO Modify
 }
 
 struct d_primary_intersector {

@@ -195,6 +195,7 @@ def load_obj(filename, obj_group = True, is_load_mtl = True):
 # Load obj using tinyobjloader (https://github.com/syoyo/tinyobjloader)
 import tinyobjloader as tol
 def load_obj_fast(filename, obj_group = True, is_load_mtl = True):
+    print('obj:'+filename)
     vertices_pool = []
     uvs_pool = []
     normals_pool = []
@@ -241,8 +242,8 @@ def load_obj_fast(filename, obj_group = True, is_load_mtl = True):
         return vertex_id
 
     for name, val in model['shapes'].items():
-        print(name)
-        current_material_name = name
+        current_material_name = val['material_name']
+        print('g:', name, 'usemtl:', current_material_name)
         indices_flatten = val['indices']
         triangle_ptr = 0
         for tri_idx, num_vertices in enumerate(val['num_face_vertices']):

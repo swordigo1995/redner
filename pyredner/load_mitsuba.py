@@ -5,6 +5,7 @@ import redner
 import os
 import pyredner
 import pyredner.transform as transform
+# from .load_obj import load_obj, load_obj_fast
 
 def parse_transform(node):
     ret = torch.eye(4)
@@ -194,11 +195,13 @@ def parse_material(node, two_sided = False):
 
 def parse_shape(node, material_dict, shape_id, shape_group_dict = None):
     if node.attrib['type'] == 'obj' or node.attrib['type'] == 'serialized':
+        print(node.attrib['id'])
         to_world = torch.eye(4)
         serialized_shape_id = 0
         mat_id = -1
         light_intensity = None
         filename = ''
+        mat_name2id = {}
         for child in node:
             if 'name' in child.attrib:
                 if child.attrib['name'] == 'filename':
@@ -209,6 +212,15 @@ def parse_shape(node, material_dict, shape_id, shape_group_dict = None):
                     serialized_shape_id = int(child.attrib['value'])
             if child.tag == 'ref':
                 mat_id = material_dict[child.attrib['id']]
+                if 'name' in child.attrib.keys() and child.attrib['name'] != 'bsdf':
+                    mat_name2id[child.attrib['name']] = child.attrib['id']
+            elif child.tag == 'bsdf':
+                #TODO hack! use default diffuse if countering internal declaration bsdf
+                mat_id = 0
+                # node_id, material = parse_material(child)
+                # if node_id is not None:
+                #     material_dict[node_id] = len(materials)
+                #     materials.append(material)
             elif child.tag == 'emitter':
                 for grandchild in child:
                     if grandchild.attrib['name'] == 'radiance':
@@ -220,9 +232,10 @@ def parse_shape(node, material_dict, shape_id, shape_group_dict = None):
                                           light_intensity[0]])
 
         if node.attrib['type'] == 'obj':
-            _, mesh_list, _ = pyredner.load_obj_fast(filename, is_load_mtl=False)
+            _, mesh_list, _ = pyredner.load_obj.load_obj_fast(filename, is_load_mtl=False)
             shape_list = []
             for mesh in mesh_list:
+                mat_name = mesh[0]
                 vertices = mesh[1].vertices.cpu()
                 indices = mesh[1].indices.cpu()
                 uvs = mesh[1].uvs
@@ -255,8 +268,8 @@ def parse_shape(node, material_dict, shape_id, shape_group_dict = None):
                     if normals is not None:
                         normals = normals.cuda()
                 # Assign material
-                if mesh[0] != '': # skip no material mesh
-                    mat_id = material_dict[mesh[0]]
+                if mat_name != '' and mat_name is not None: # skip no material mesh
+                    mat_id = material_dict[mat_name2id[mat_name]]
                 shape_list.append(pyredner.Shape(vertices, indices, uvs, normals, mat_id))
             return shape_list, lgt
         else:
@@ -356,25 +369,28 @@ def parse_shape(node, material_dict, shape_id, shape_group_dict = None):
                     if pyredner.get_use_gpu():
                         to_world = to_world.cuda()
             if child.tag == 'ref':
-                shape = shape_group_dict[child.attrib['id']]
-        # transform instance
-        vertices = shape.vertices
-        normals = shape.normals
-        vector1 = torch.ones(vertices.shape[0], 1)
-        vertices = torch.cat((vertices, vector1.cuda() if pyredner.get_use_gpu() else vector1), dim = 1)
-        vertices = vertices @ torch.transpose(to_world, 0, 1)
-        vertices = vertices / vertices[:, 3:4]
-        vertices = vertices[:, 0:3].contiguous()
-        if normals is not None:
-            normals = normals @ (torch.inverse(torch.transpose(to_world, 0, 1))[:3, :3])
-            normals = normals.contiguous()
-        # assert(vertices is not None)
-        # assert(indices is not None)
-        # lgt = None
-        # if light_intensity is not None:
-        #     lgt = pyredner.AreaLight(shape_id, light_intensity)
+                shape_ = shape_group_dict[child.attrib['id']]
+        shape_list = []
+        for shape in list(shape_):
+            # transform instance
+            vertices = shape.vertices
+            normals = shape.normals
+            vector1 = torch.ones(vertices.shape[0], 1)
+            vertices = torch.cat((vertices, vector1.cuda() if pyredner.get_use_gpu() else vector1), dim = 1)
+            vertices = vertices @ torch.transpose(to_world, 0, 1)
+            vertices = vertices / vertices[:, 3:4]
+            vertices = vertices[:, 0:3].contiguous()
+            if normals is not None:
+                normals = normals @ (torch.inverse(torch.transpose(to_world, 0, 1))[:3, :3])
+                normals = normals.contiguous()
+            # assert(vertices is not None)
+            # assert(indices is not None)
+            # lgt = None
+            # if light_intensity is not None:
+            #     lgt = pyredner.AreaLight(shape_id, light_intensity)
+            shape_list.append(pyredner.Shape(vertices, shape.indices, shape.uvs, normals, shape.material_id))
 
-        return pyredner.Shape(vertices, shape.indices, shape.uvs, normals, shape.material_id), None
+        return shape_list, None
     else:
         print('Shape type {} is not supported!'.format(node.attrib['type']))
         assert(False)
