@@ -163,6 +163,13 @@ inline auto operator-(const T0 &v0,
 
 template <typename T0, typename T1>
 DEVICE
+inline auto operator-(const TVector3<T0> &v0,
+                      const T1 &v1) {
+    return TVector3<decltype(v0[0] - v1)>{v0[0] - v1, v0[1] - v1, v0[2] - v1};
+}
+
+template <typename T0, typename T1>
+DEVICE
 inline auto operator-(const TVector2<T0> &v0,
                       const TVector2<T1> &v1) {
     return TVector2<decltype(v0[0] - v1[0])>{
@@ -282,6 +289,33 @@ inline auto operator/(const TVector3<T0> &v0,
     return v0 * inv_s;
 }
 
+template <typename T0, typename T1>
+DEVICE
+inline auto operator/(const T0 &s,
+                      const TVector3<T1> &v1) {
+    return TVector3<decltype(s / v1[0])>{
+        s / v1[0], s / v1[2], s / v1[2]};
+}
+
+template <typename T0, typename T1>
+DEVICE
+inline auto operator/(const TVector3<T0> &v0,
+                      const TVector3<T1> &v1) {
+    return TVector3<decltype(v0[0] / v1[0])>{
+        v0[0] / v1[0], v0[1] / v1[2], v0[2] / v1[2]};
+}
+
+template <typename T0, typename T1>
+DEVICE
+inline TVector3<T0> operator/=(TVector3<T0> &v0,
+                               const T1 &s) {
+    auto inv_s = 1 / s;
+    v0[0] *= inv_s;
+    v0[1] *= inv_s;
+    v0[2] *= inv_s;
+    return v0;
+}
+
 template <typename T>
 DEVICE
 inline TVector2<T> get_normal(const TVector2<T> &v) {
@@ -347,7 +381,7 @@ inline TVector3<T> d_length(const TVector3<T> &v0, const T &d_l) {
 template <typename T0, typename T1>
 DEVICE
 inline auto distance_squared(const TVector3<T0> &v0,
-                     const TVector3<T1> &v1) {
+                             const TVector3<T1> &v1) {
     return length_squared(v1 - v0);
 }
 
@@ -397,6 +431,13 @@ inline TVector3<T> d_normalize(const TVector3<T> &v0, const TVector3<T> &d_n) {
     auto d_v0 = d_n / l;
     auto d_l = -(d_n[0] * n[0] + d_n[1] * n[1] + d_n[2] * n[2]) / l;
     return d_v0 + d_length(v0, d_l);
+}
+
+template <typename T0, typename T1>
+DEVICE
+inline auto dot(const TVector2<T0> &v0, const TVector2<T1> &v1) {
+    return v0[0] * v1[0] +
+           v0[1] * v1[1];
 }
 
 template <typename T0, typename T1>

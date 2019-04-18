@@ -4,6 +4,9 @@
 #include "shape.h"
 #include "camera.h"
 #include "channels.h"
+#include "edge_tree.h"
+
+#include <memory>
 
 struct Scene;
 
@@ -28,7 +31,6 @@ struct Edge {
 };
 
 struct PrimaryEdgeRecord {
-
     Edge edge;
     Vector2 edge_pt;
 };
@@ -37,6 +39,8 @@ struct SecondaryEdgeRecord {
     Edge edge;
     Vector3 edge_pt;
     Vector3 mwt;
+    bool use_nee_ray;
+    bool is_diffuse_or_glossy;
 };
 
 template <typename T>
@@ -53,6 +57,20 @@ struct TSecondaryEdgeSample {
     T t;
 };
 
+struct EdgeSampler {
+    EdgeSampler() {}
+    EdgeSampler(const std::vector<const Shape*> &shapes,
+                const Scene &scene);
+
+    Buffer<Edge> edges;
+    Buffer<Real> primary_edges_pmf;
+    Buffer<Real> primary_edges_cdf;
+    Buffer<Real> secondary_edges_pmf;
+    Buffer<Real> secondary_edges_cdf;
+    // For secondary edges
+    std::unique_ptr<EdgeTree> edge_tree;
+};
+
 using PrimaryEdgeSample = TPrimaryEdgeSample<Real>;
 using SecondaryEdgeSample = TSecondaryEdgeSample<Real>;
 
@@ -64,16 +82,6 @@ inline Vector3f get_v0(const Shape *shapes, const Edge &edge) {
 DEVICE
 inline Vector3f get_v1(const Shape *shapes, const Edge &edge) {
     return get_vertex(shapes[edge.shape_id], edge.v1);
-}
-
-DEVICE
-inline Vector3 get_n0(const Shape *shapes, const Edge &edge) {
-    return get_normal(shapes[edge.shape_id], edge.f0);
-}
-
-DEVICE
-inline Vector3 get_n1(const Shape *shapes, const Edge &edge) {
-    return get_normal(shapes[edge.shape_id], edge.f1);
 }
 
 DEVICE
@@ -101,13 +109,23 @@ inline Vector3f get_non_shared_v1(
 }
 
 DEVICE
-inline bool is_silhouette(const Shape *shapes,
-                          const Vector3 &p,
-                          const Edge &edge) {
-    if (!has_shading_normals(shapes[edge.shape_id])) {
-        // If we are not using Phong normal, every edge is silhouette
-        return true;
-    }
+inline Vector3 get_n0(const Shape *shapes, const Edge &edge) {
+    auto v0 = Vector3{get_v0(shapes, edge)};
+    auto v1 = Vector3{get_v1(shapes, edge)};
+    auto ns_v0 = Vector3{get_non_shared_v0(shapes, edge)};
+    return normalize(cross(v0 - ns_v0, v1 - ns_v0));
+}
+
+DEVICE
+inline Vector3 get_n1(const Shape *shapes, const Edge &edge) {
+    auto v0 = Vector3{get_v0(shapes, edge)};
+    auto v1 = Vector3{get_v1(shapes, edge)};
+    auto ns_v1 = Vector3{get_non_shared_v1(shapes, edge)};
+    return normalize(cross(v1 - ns_v1, v0 - ns_v1));
+}
+
+DEVICE
+inline bool is_silhouette(const Shape *shapes, const Vector3 &p, const Edge &edge) {
     if (edge.f0 == -1 || edge.f1 == -1) {
         // Only adjacent to one face
         return true;
@@ -118,22 +136,55 @@ inline bool is_silhouette(const Shape *shapes,
     auto ns_v1 = Vector3{get_non_shared_v1(shapes, edge)};
     auto n0 = normalize(cross(v0 - ns_v0, v1 - ns_v0));
     auto n1 = normalize(cross(v1 - ns_v1, v0 - ns_v1));
+    if (!has_shading_normals(shapes[edge.shape_id])) {
+        // If we are not using Phong normal, every edge is silhouette,
+        // except edges with dihedral angle of 0
+        if (dot(n0, n1) >= 1 - 1e-6f) {
+            return false;
+        }
+        return true;
+    }
     auto frontfacing0 = dot(p - ns_v0, n0) > 0.f;
     auto frontfacing1 = dot(p - ns_v1, n1) > 0.f;
     return (frontfacing0 && !frontfacing1) || (!frontfacing0 && frontfacing1);
 }
 
-struct EdgeSampler {
-    EdgeSampler() {}
-    EdgeSampler(const std::vector<const Shape*> &shapes,
-                const Scene &scene);
+DEVICE
+inline bool is_silhouette_dir(const Shape *shapes, const Vector3 &dir, const Edge &edge) {
+    if (edge.f0 == -1 || edge.f1 == -1) {
+        // Only adjacent to one face
+        return true;
+    }
+    auto v0 = Vector3{get_v0(shapes, edge)};
+    auto v1 = Vector3{get_v1(shapes, edge)};
+    auto ns_v0 = Vector3{get_non_shared_v0(shapes, edge)};
+    auto ns_v1 = Vector3{get_non_shared_v1(shapes, edge)};
+    auto n0 = normalize(cross(v0 - ns_v0, v1 - ns_v0));
+    auto n1 = normalize(cross(v1 - ns_v1, v0 - ns_v1));
+    if (!has_shading_normals(shapes[edge.shape_id])) {
+        // If we are not using Phong normal, every edge is silhouette,
+        // except edges with dihedral angle of 0
+        if (dot(n0, n1) >= 1 - 1e-6f) {
+            return false;
+        }
+        return true;
+    }
+    auto frontfacing0 = dot(dir, n0) > 0.f;
+    auto frontfacing1 = dot(dir, n1) > 0.f;
+    return (frontfacing0 && !frontfacing1) || (!frontfacing0 && frontfacing1);
+}
 
-    Buffer<Edge> edges;
-    Buffer<Real> primary_edges_pmf;
-    Buffer<Real> primary_edges_cdf;
-    Buffer<Real> secondary_edges_pmf;
-    Buffer<Real> secondary_edges_cdf;
-};
+
+DEVICE
+inline Real compute_exterior_dihedral_angle(const Shape *shapes, const Edge &edge) {
+    auto exterior_dihedral = Real(M_PI);
+    if (edge.f1 != -1) {
+        auto n0 = get_n0(shapes, edge);
+        auto n1 = get_n1(shapes, edge);
+        exterior_dihedral = acos(clamp(dot(n0, n1), Real(-1), Real(1)));
+    }
+    return exterior_dihedral;
+}
 
 void sample_primary_edges(const Scene &scene,
                           const BufferView<PrimaryEdgeSample> &samples,
@@ -165,6 +216,9 @@ void sample_secondary_edges(const Scene &scene,
                             const BufferView<RayDifferential> &incoming_ray_differentials,
                             const BufferView<Intersection> &shading_isects,
                             const BufferView<SurfacePoint> &shading_points,
+                            const BufferView<Ray> &nee_rays,
+                            const BufferView<Intersection> &nee_isects,
+                            const BufferView<SurfacePoint> &nee_points,
                             const BufferView<Vector3> &throughputs,
                             const BufferView<Real> &min_roughness,
                             const float *d_rendered_image,
@@ -191,3 +245,4 @@ void accumulate_secondary_edge_derivatives(const Scene &scene,
                                            const BufferView<Real> &edge_contribs,
                                            BufferView<SurfacePoint> d_points,
                                            BufferView<DVertex> d_vertices);
+

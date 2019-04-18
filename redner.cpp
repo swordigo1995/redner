@@ -43,7 +43,8 @@ PYBIND11_MODULE(redner, m) {
                       const std::vector<const Material*> &,
                       const std::vector<const AreaLight*> &,
                       const std::shared_ptr<const EnvironmentMap> &,
-                      bool>());
+                      bool,
+                      int>());
 
     py::class_<DScene, std::shared_ptr<DScene>>(m, "DScene")
         .def(py::init<const DCamera &,
@@ -51,7 +52,8 @@ PYBIND11_MODULE(redner, m) {
                       const std::vector<DMaterial*> &,
                       const std::vector<DAreaLight*> &,
                       const std::shared_ptr<DEnvironmentMap> &,
-                      bool>());
+                      bool,
+                      int>());
 
     py::class_<Shape>(m, "Shape")
         .def(py::init<ptr<float>,
@@ -129,7 +131,9 @@ PYBIND11_MODULE(redner, m) {
         .value("uv", Channels::uv)
         .value("diffuse_reflectance", Channels::diffuse_reflectance)
         .value("specular_reflectance", Channels::specular_reflectance)
-        .value("roughness", Channels::roughness);
+        .value("roughness", Channels::roughness)
+        .value("shape_id", Channels::shape_id)
+        .value("material_id", Channels::material_id);
 
     m.def("compute_num_channels", compute_num_channels, "");
 
@@ -138,7 +142,8 @@ PYBIND11_MODULE(redner, m) {
                       int,
                       int,
                       std::vector<Channels>>())
-        .def_readwrite("seed", &RenderOptions::seed);
+        .def_readwrite("seed", &RenderOptions::seed)
+        .def_readwrite("num_samples", &RenderOptions::num_samples);
 
     py::class_<Vector2f>(m, "Vector2f")
         .def_readwrite("x", &Vector2f::x)

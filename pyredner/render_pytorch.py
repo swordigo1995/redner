@@ -4,6 +4,7 @@ import numpy as np
 import redner
 import pyredner
 import time
+import skimage.io
 
 # There is a bias-variance trade off in the backward pass.
 # If the forward pass and the backward pass are correlated
@@ -268,12 +269,18 @@ class RenderFunction(torch.autograd.Function):
         else:
             current_index += 7
 
+        start = time.time()
         scene = redner.Scene(camera,
                              shapes,
                              materials,
                              area_lights,
                              envmap,
-                             pyredner.get_use_gpu())
+                             pyredner.get_use_gpu(),
+                             pyredner.get_device().index if pyredner.get_device().index is not None else -1)
+        time_elapsed = time.time() - start
+        if print_timing:
+            print('Scene construction, time: %.5f s' % time_elapsed)
+
         num_samples = args[current_index]
         current_index += 1
         max_bounces = args[current_index]
@@ -281,7 +288,11 @@ class RenderFunction(torch.autograd.Function):
         channels = args[current_index]
         current_index += 1
 
-        options = redner.RenderOptions(seed, num_samples, max_bounces, channels)
+        # check that num_samples is a tuple
+        if isinstance(num_samples, int):
+            num_samples = (num_samples, num_samples)
+
+        options = redner.RenderOptions(seed, num_samples[0], max_bounces, channels)
         num_channels = redner.compute_num_channels(channels)
         rendered_image = torch.zeros(resolution[0], resolution[1], num_channels,
             device = pyredner.get_device())
@@ -313,6 +324,7 @@ class RenderFunction(torch.autograd.Function):
         ctx.envmap = envmap
         ctx.scene = scene
         ctx.options = options
+        ctx.num_samples = num_samples
         return rendered_image
 
     @staticmethod
@@ -434,10 +446,13 @@ class RenderFunction(torch.autograd.Function):
                                 d_materials,
                                 d_area_lights,
                                 d_envmap,
-                                pyredner.get_use_gpu())
+                                pyredner.get_use_gpu(),
+                                pyredner.get_device().index if pyredner.get_device().index is not None else -1)
         if not get_use_correlated_random_number():
             # Decouple the forward/backward random numbers by adding a big prime number
             options.seed += 1000003
+
+        options.num_samples = ctx.num_samples[1]
         start = time.time()
         redner.render(scene, options,
                       redner.float_ptr(0),
@@ -449,16 +464,30 @@ class RenderFunction(torch.autograd.Function):
             print('Backward pass, time: %.5f s' % time_elapsed)
 
         # # For debugging
-        # pyredner.imwrite(grad_img, 'grad_img.exr')
-        # grad_img = torch.ones(256, 256, 3)
+        # # pyredner.imwrite(grad_img, 'grad_img.exr')
+        # grad_img = torch.ones(256, 256, 3, device = pyredner.get_device())
         # debug_img = torch.zeros(256, 256, 3)
+        # start = time.time()
         # redner.render(scene, options,
         #               redner.float_ptr(0),
         #               redner.float_ptr(grad_img.data_ptr()),
         #               d_scene,
         #               redner.float_ptr(debug_img.data_ptr()))
+        # time_elapsed = time.time() - start
+        # if print_timing:
+        #     print('Backward pass, time: %.5f s' % time_elapsed)
         # pyredner.imwrite(debug_img, 'debug.exr')
         # pyredner.imwrite(-debug_img, 'debug_.exr')
+        # debug_img = debug_img.numpy()
+        # print(np.max(debug_img))
+        # print(np.min(debug_img))
+        # debug_max = 0.5
+        # debug_min = -0.5
+        # debug_img = np.clip((debug_img - debug_min) / (debug_max - debug_min), 0, 1)
+        # debug_img = debug_img[:, :, 0]
+        # import matplotlib.cm as cm
+        # debug_img = cm.viridis(debug_img)
+        # skimage.io.imsave('debug.png', np.power(debug_img, 1/2.2))
         # exit()
 
         ret_list = []

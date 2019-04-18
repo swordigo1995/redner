@@ -29,7 +29,7 @@ pyredner.imwrite(img.cpu(), 'results/test_teapot_specular/target.exr')
 pyredner.imwrite(img.cpu(), 'results/test_teapot_specular/target.png')
 target = pyredner.imread('results/test_teapot_specular/target.exr')
 if pyredner.get_use_gpu():
-    target = target.cuda()
+    target = target.cuda(device = pyredner.get_device())
 
 # Perturb the scene, this is our initial guess
 # We perturb the last shape, which is the SIGGRAPH logo
@@ -65,6 +65,8 @@ for t in range(num_iteration):
 
     loss.backward()
     print('translation.grad:', translation.grad)
+
+    torch.nn.utils.clip_grad_norm_(translation, 10)
 
     optimizer.step()
     print('translation:', translation)

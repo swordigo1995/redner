@@ -275,7 +275,6 @@ void fitTab(mat3 * tab, vec2 * tabAmplitude, const int N, const Brdf& brdf)
 	}
 }
 
-
 int main(int argc, char* argv[])
 {
 	// BRDF to fit

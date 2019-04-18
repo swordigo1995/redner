@@ -14,11 +14,6 @@
 #include <embree3/rtcore_ray.h>
 #include <algorithm>
 
-struct BoundingSphere {
-    Vector3 center;
-    Real radius;
-};
-
 struct vector3f_min {
     DEVICE Vector3f operator()(const Vector3f &a, const Vector3f &b) const {
         return Vector3{min(a.x, b.x), min(a.y, b.y), min(a.z, b.z)};
@@ -33,7 +28,7 @@ struct vector3f_max {
 
 struct area_computer {
     DEVICE void operator()(int idx) {
-        area[idx] = get_area(shape, idx);      
+        area[idx] = get_area(shape, idx);
     }
 
     Shape shape;
@@ -68,12 +63,23 @@ Scene::Scene(const Camera &camera,
              const std::vector<const Material*> &materials,
              const std::vector<const AreaLight*> &area_lights,
              const std::shared_ptr<const EnvironmentMap> &envmap,
-             bool use_gpu)
-        : camera(camera), use_gpu(use_gpu) {
+             bool use_gpu,
+             int gpu_index)
+        : camera(camera), use_gpu(use_gpu), gpu_index(gpu_index) {
+#ifdef __NVCC__
+    int old_device_id = -1;
+#endif
     if (use_gpu) {
 #ifdef __NVCC__
+        checkCuda(cudaGetDevice(&old_device_id));
+        if (gpu_index != -1) {
+            checkCuda(cudaSetDevice(gpu_index));
+        }
         // Initialize Optix prime scene
         optix_context = optix::prime::Context::create(RTP_CONTEXT_TYPE_CUDA);
+        if (gpu_index != -1) {
+            optix_context->setCudaDeviceNumbers({(uint32_t)gpu_index});
+        }
         optix_models.resize(shapes.size());
         optix_instances.resize(shapes.size());
         transforms.resize(shapes.size(), Matrix4x4f::identity());
@@ -127,7 +133,7 @@ Scene::Scene(const Camera &camera,
     }
 
     // Compute bounding sphere
-    BoundingSphere bsphere;
+    Sphere bsphere;
     auto scene_min_pos = Vector3f{
         std::numeric_limits<float>::infinity(),
         std::numeric_limits<float>::infinity(),
@@ -225,6 +231,7 @@ Scene::Scene(const Camera &camera,
     }
 
     // Flatten the scene into array
+    // TODO: use cudaMemcpyAsync for gpu code path
     if (shapes.size() > 0) {
         this->shapes = Buffer<Shape>(use_gpu, shapes.size());
         for (int shape_id = 0; shape_id < (int)shapes.size(); shape_id++) {
@@ -263,6 +270,12 @@ Scene::Scene(const Camera &camera,
     material_mutexes = std::vector<std::mutex>(materials.size());
 
     edge_sampler = EdgeSampler(shapes, *this);
+
+#ifdef __NVCC__
+    if (old_device_id != -1) {
+        checkCuda(cudaSetDevice(old_device_id));
+    }
+#endif
 }
 
 Scene::~Scene() {
@@ -272,7 +285,13 @@ Scene::~Scene() {
         delete envmap;
     } else {
 #ifdef __NVCC__
+        int old_device_id = -1;
+        checkCuda(cudaGetDevice(&old_device_id));
+        if (gpu_index != -1) {
+            checkCuda(cudaSetDevice(gpu_index));
+        }
         checkCuda(cudaFree(envmap));
+        checkCuda(cudaSetDevice(old_device_id));
 #else
         assert(false);
 #endif
@@ -285,8 +304,18 @@ DScene::DScene(const DCamera &camera,
                const std::vector<DMaterial*> &materials,
                const std::vector<DAreaLight*> &area_lights,
                const std::shared_ptr<DEnvironmentMap> &envmap,
-               bool use_gpu) : use_gpu(use_gpu) {
+               bool use_gpu,
+               int gpu_index) : use_gpu(use_gpu), gpu_index(gpu_index) {
+#ifdef __NVCC__
+    int old_device_id = -1;
+#endif
     if (use_gpu) {
+#ifdef __NVCC__
+        checkCuda(cudaGetDevice(&old_device_id));
+        if (gpu_index != -1) {
+            checkCuda(cudaSetDevice(gpu_index));
+        }
+#endif
         cuda_synchronize();
     }
     // Flatten the scene into array
@@ -324,6 +353,12 @@ DScene::DScene(const DCamera &camera,
     } else {
         this->envmap = nullptr;
     }
+#ifdef __NVCC__
+    if (old_device_id != -1) {
+        checkCuda(cudaSetDevice(old_device_id));
+    }
+#endif
+
 }
 
 DScene::~DScene() {
@@ -331,7 +366,13 @@ DScene::~DScene() {
         delete envmap;
     } else {
 #ifdef __NVCC__
+        int old_device_id = -1;
+        checkCuda(cudaGetDevice(&old_device_id));
+        if (gpu_index != -1) {
+            checkCuda(cudaSetDevice(gpu_index));
+        }
         checkCuda(cudaFree(envmap));
+        checkCuda(cudaSetDevice(old_device_id));
 #else
         assert(false);
 #endif
@@ -377,7 +418,7 @@ __global__ void intersect_shape_kernel(
         const Shape *shapes,
         const int *active_pixels,
         const OptiXHit *hits,
-        const Ray *rays,
+        Ray *rays,
         const RayDifferential *ray_differentials,
         Intersection *out_isects,
         SurfacePoint *out_points,
@@ -388,7 +429,7 @@ __global__ void intersect_shape_kernel(
     }
     auto pixel_id = active_pixels[idx];
 
-    if (hits[idx].t >= 0.f) {
+    if (hits[idx].t >= 0.f && length_squared(rays[pixel_id].dir) > 1e-3f) {
         auto shape_id = hits[idx].inst_id;
         auto tri_id = hits[idx].tri_id;
         out_isects[pixel_id].shape_id = shape_id;
@@ -399,6 +440,7 @@ __global__ void intersect_shape_kernel(
         out_points[pixel_id] =
             intersect_shape(shape, tri_id, ray, ray_differential,
                 new_ray_differentials[pixel_id]);
+        rays[pixel_id].tmax = hits[idx].t;
     } else {
         out_isects[pixel_id].shape_id = -1;
         out_isects[pixel_id].tri_id = -1;
@@ -409,7 +451,7 @@ __global__ void intersect_shape_kernel(
 void intersect_shape(const Shape *shapes,
                      const BufferView<int> &active_pixels,
                      const BufferView<OptiXHit> &optix_hits,
-                     const BufferView<Ray> &rays,
+                     BufferView<Ray> rays,
                      const BufferView<RayDifferential> &ray_differentials,
                      BufferView<Intersection> isects,
                      BufferView<SurfacePoint> points,
@@ -431,7 +473,7 @@ void intersect_shape(const Shape *shapes,
 
 void intersect(const Scene &scene,
                const BufferView<int> &active_pixels,
-               const BufferView<Ray> &rays,
+               BufferView<Ray> rays,
                const BufferView<RayDifferential> &ray_differentials,
                BufferView<Intersection> intersections,
                BufferView<SurfacePoint> points,
@@ -481,7 +523,7 @@ void intersect(const Scene &scene,
             for (int work_id = id_offset; work_id < work_end; work_id++) {
                 auto id = work_id;
                 auto pixel_id = active_pixels[id];
-                const Ray &ray = rays[pixel_id];
+                Ray &ray = rays[pixel_id];
                 RTCIntersectContext rtc_context;
                 rtcInitIntersectContext(&rtc_context);
                 RTCRayHit rtc_ray_hit;
@@ -501,7 +543,8 @@ void intersect(const Scene &scene,
                 rtc_ray_hit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
                 // TODO: switch to rtcIntersect16
                 rtcIntersect1(scene.embree_scene, &rtc_context, &rtc_ray_hit);
-                if (rtc_ray_hit.hit.geomID == RTC_INVALID_GEOMETRY_ID) {
+                if (rtc_ray_hit.hit.geomID == RTC_INVALID_GEOMETRY_ID ||
+                         length_squared(ray.dir) <= 1e-3f) {
                     intersections[pixel_id] = Intersection{-1, -1};
                     new_ray_differentials[pixel_id] = ray_differentials[pixel_id];
                 } else {
@@ -510,7 +553,6 @@ void intersect(const Scene &scene,
                     intersections[pixel_id] =
                         Intersection{shape_id, tri_id};
                     const auto &shape = scene.shapes[shape_id];
-                    const auto &ray = rays[pixel_id];
                     const auto &ray_differential = ray_differentials[pixel_id];
                     points[pixel_id] =
                         intersect_shape(shape,
@@ -518,6 +560,7 @@ void intersect(const Scene &scene,
                                         ray,
                                         ray_differential,
                                         new_ray_differentials[pixel_id]);
+                    ray.tmax = rtc_ray_hit.ray.tfar;
                 }
             }
         }, num_threads);
@@ -576,9 +619,7 @@ void occluded(const Scene &scene,
                        optix_hits.data);
         // XXX: should use watertight intersection here?
         query->execute(0);
-        update_occluded_rays(active_pixels,
-                             optix_hits,
-                             rays);
+        update_occluded_rays(active_pixels, optix_hits, rays);
 #else
         assert(false);
 #endif
@@ -718,7 +759,7 @@ void test_scene_intersect(bool use_gpu) {
                    1, // num_triangles
                    0,
                    -1};
-    Scene scene{Camera{}, {&triangle}, {}, {}, {}, use_gpu};
+    Scene scene{Camera{}, {&triangle}, {}, {}, {}, use_gpu, 0};
     parallel_init();
 
     Buffer<int> active_pixels(use_gpu, 2);
@@ -803,7 +844,7 @@ void test_sample_point_on_light(bool use_gpu) {
         std::vector<const AreaLight*>{&light0, &light1});
     std::shared_ptr<Camera> camera = std::make_shared<Camera>();
 
-    Scene scene{Camera{}, {&shape0, &shape1}, {}, {&light0, &light1}, {}, use_gpu};
+    Scene scene{Camera{}, {&shape0, &shape1}, {}, {&light0, &light1}, {}, use_gpu, 0};
     cuda_synchronize();
     // Power of the first light source: 1.5
     // Power of the second light source: 2

@@ -314,6 +314,21 @@ struct primary_contribs_accumulator {
                         }
                         d++;
                     } break;
+                    // when there are multiple samples per pixel,
+                    // we use the last sample for determining shape id & material id
+                    case Channels::shape_id: {
+                        if (shading_isect.valid()) {
+                            rendered_image[nd * pixel_id + d    ] = Real(shading_isect.shape_id);
+                        }
+                        d++;
+                    } break;
+                    case Channels::material_id: {
+                        if (shading_isect.valid()) {
+                            const auto &shading_shape = scene.shapes[shading_isect.shape_id];
+                            rendered_image[nd * pixel_id + d    ] = Real(shading_shape.material_id);
+                        }
+                        d++;
+                    } break;
                     default: {
                         assert(false);
                     }
@@ -428,6 +443,13 @@ struct primary_contribs_accumulator {
                             r *= channel_multipliers[nd * pixel_id + d];
                             edge_contribs[pixel_id] += r;
                         }
+                        d++;
+                    } break;
+                    // shape_id & material_id are not differentiable
+                    case Channels::shape_id: {
+                        d++;
+                    } break;
+                    case Channels::material_id: {
                         d++;
                     } break;
                     default: {
@@ -648,6 +670,13 @@ struct d_primary_contribs_accumulator {
                     }
                     d += 1;
                 } break;
+                // shape_id & material_id are not differentiable
+                case Channels::shape_id: {
+                    d++;
+                } break;
+                case Channels::material_id: {
+                    d++;
+                } break;
                 default: {
                     assert(false);
                 }
@@ -816,7 +845,6 @@ struct path_contribs_accumulator {
     DEVICE void operator()(int idx) {
         auto pixel_id = active_pixels[idx];
         const auto &throughput = throughputs[pixel_id];
-        assert(isfinite(throughput));
         const auto &incoming_ray = incoming_rays[pixel_id];
         const auto &shading_isect = shading_isects[pixel_id];
         const auto &shading_point = shading_points[pixel_id];
@@ -908,7 +936,8 @@ struct path_contribs_accumulator {
             // Hit environment map
             auto wo = bsdf_ray.dir;
             auto pdf_bsdf = bsdf_pdf(material, shading_point, wi, wo, min_rough);
-            if (pdf_bsdf > 1e-20f) {
+            // wo can be zero when bsdf_sample failed
+            if (length_squared(wo) > 0 && pdf_bsdf > 1e-20f) {
                 // XXX: For now we don't use ray differentials for envmap
                 //      A proper approach might be to use a filter radius based on sampling density?
                 RayDifferential ray_diff{Vector3{0, 0, 0}, Vector3{0, 0, 0},
@@ -1306,7 +1335,8 @@ struct d_path_contribs_accumulator {
             
             auto wo = bsdf_ray.dir;
             auto pdf_bsdf = bsdf_pdf(material, shading_point, wi, wo, min_rough);
-            if (pdf_bsdf > 0) {
+            // wo can be zero if bsdf_sample fails
+            if (length_squared(wo) > 0 && pdf_bsdf > 0) {
                 d_diffuse_tex.material_id = shading_shape.material_id;
                 d_specular_tex.material_id = shading_shape.material_id;
                 d_roughness_tex.material_id = shading_shape.material_id;
@@ -1874,6 +1904,15 @@ void render(const Scene &scene,
             ptr<float> d_rendered_image,
             std::shared_ptr<DScene> d_scene,
             ptr<float> debug_image) {
+#ifdef __NVCC__
+    int old_device_id = -1;
+    if (scene.use_gpu) {
+        checkCuda(cudaGetDevice(&old_device_id));
+        if (scene.gpu_index != -1) {
+            checkCuda(cudaSetDevice(scene.gpu_index));
+        }
+    }
+#endif
     parallel_init();
     ChannelInfo channel_info(options.channels, scene.use_gpu);
 
@@ -2045,13 +2084,13 @@ void render(const Scene &scene,
         }
 
         if (d_rendered_image.get() != nullptr) {
+            // Traverse the path backward for the derivatives
             bool first = true;
-             // Traverse the path backward for the derivatives
             for (int depth = max_bounces - 1; depth >= 0; depth--) {
                 // Buffer views for this path vertex
                 auto num_actives = num_active_pixels[depth];
                 if (num_actives <= 0) {
-                    break;
+                    continue;
                 }
                 auto active_pixels =
                     path_buffer.active_pixels.view(depth * num_pixels, num_actives);
@@ -2175,6 +2214,9 @@ void render(const Scene &scene,
                     incoming_ray_differentials,
                     shading_isects,
                     shading_points,
+                    nee_rays,
+                    light_isects,
+                    light_points,
                     throughputs,
                     min_roughness,
                     d_rendered_image.get(),
@@ -2354,27 +2396,46 @@ void render(const Scene &scene,
                                                       d_points,
                                                       d_edge_vertices);
                 ////////////////////////////////////////////////////////////////////////////////
-                
-                // for (int i = 0; i < active_pixels.size(); i++) {
-                //     auto pixel_id = active_pixels[i];
-                //     // auto d_p = d_points[pixel_id].position;
-                //     // debug_image[3 * pixel_id + 0] += d_p[0];
-                //     // debug_image[3 * pixel_id + 1] += d_p[0];
-                //     // debug_image[3 * pixel_id + 2] += d_p[0];
-                //     auto edge_record = edge_records[i];
-                //     if (edge_record.shape_id == 6) {
-                //         auto d_v0 = d_edge_vertices[2 * i + 0].d_v;
-                //         auto d_v1 = d_edge_vertices[2 * i + 1].d_v;
-                //         debug_image[3 * pixel_id + 0] += d_v0[0] + d_v1[0];
-                //         debug_image[3 * pixel_id + 1] += d_v0[0] + d_v1[0];
-                //         debug_image[3 * pixel_id + 2] += d_v0[0] + d_v1[0];
-                //         // auto ec0 = edge_contribs[2 * i + 0];
-                //         // auto ec1 = edge_contribs[2 * i + 1];
-                //         // debug_image[3 * pixel_id + 0] += ec0 + ec1;
-                //         // debug_image[3 * pixel_id + 1] += ec0 + ec1;
-                //         // debug_image[3 * pixel_id + 2] += ec0 + ec1;
-                //     }
-                // }
+                /*cuda_synchronize();
+                for (int i = 0; i < num_actives; i++) {
+                    auto pixel_id = active_pixels[i];
+                    // auto d_p = d_points[pixel_id].position;
+                    // debug_image[3 * pixel_id + 0] += d_p[0];
+                    // debug_image[3 * pixel_id + 1] += d_p[0];
+                    // debug_image[3 * pixel_id + 2] += d_p[0];
+                    auto c = 1;
+                    auto d_e_v0 = d_edge_vertices[2 * i + 0];
+                    auto d_e_v1 = d_edge_vertices[2 * i + 1];
+                    if (d_e_v0.shape_id == 1) {
+                        auto d_v0 = d_e_v0.d_v;
+                        auto d_v1 = d_e_v1.d_v;
+                        debug_image[3 * pixel_id + 0] += d_v0[c] + d_v1[c];
+                        debug_image[3 * pixel_id + 1] += d_v0[c] + d_v1[c];
+                        debug_image[3 * pixel_id + 2] += d_v0[c] + d_v1[c];
+                    }
+                    auto d_l_v0 = d_light_vertices[3 * i + 0];
+                    auto d_l_v1 = d_light_vertices[3 * i + 1];
+                    auto d_l_v2 = d_light_vertices[3 * i + 2];
+                    if (d_l_v0.shape_id == 6) {
+                        auto d_v0 = d_l_v0.d_v;
+                        auto d_v1 = d_l_v1.d_v;
+                        auto d_v2 = d_l_v2.d_v;
+                        debug_image[3 * pixel_id + 0] += d_v0[c] + d_v1[c] + d_v2[c];
+                        debug_image[3 * pixel_id + 1] += d_v0[c] + d_v1[c] + d_v2[c];
+                        debug_image[3 * pixel_id + 2] += d_v0[c] + d_v1[c] + d_v2[c];
+                    }
+                    auto d_b_v0 = d_bsdf_vertices[3 * i + 0];
+                    auto d_b_v1 = d_bsdf_vertices[3 * i + 1];
+                    auto d_b_v2 = d_bsdf_vertices[3 * i + 2];
+                    if (d_b_v0.shape_id == 6) {
+                        auto d_v0 = d_b_v0.d_v;
+                        auto d_v1 = d_b_v1.d_v;
+                        auto d_v2 = d_b_v2.d_v;
+                        debug_image[3 * pixel_id + 0] += d_v0[c] + d_v1[c] + d_v2[c];
+                        debug_image[3 * pixel_id + 1] += d_v0[c] + d_v1[c] + d_v2[c];
+                        debug_image[3 * pixel_id + 2] += d_v0[c] + d_v1[c] + d_v2[c];
+                    }
+                }*/
 
                 // Deposit vertices, texture, light derivatives
                 // sort the derivatives by id & reduce by key
@@ -2522,15 +2583,19 @@ void render(const Scene &scene,
                                        d_primary_vertices,
                                        d_cameras);
 
-                // for (int i = 0; i < primary_active_pixels.size(); i++) {
-                //     auto pixel_id = primary_active_pixels[i];
-                //     auto d_v0 = d_primary_vertices[3 * i + 0].d_v;
-                //     auto d_v1 = d_primary_vertices[3 * i + 1].d_v;
-                //     auto d_v2 = d_primary_vertices[3 * i + 2].d_v;
-                //     debug_image[3 * pixel_id + 0] += (d_v0[0] + d_v1[0] + d_v2[0]) / 3.f;
-                //     debug_image[3 * pixel_id + 1] += (d_v0[0] + d_v1[0] + d_v2[0]) / 3.f;
-                //     debug_image[3 * pixel_id + 2] += (d_v0[0] + d_v1[0] + d_v2[0]) / 3.f;
-                // }
+                /*cuda_synchronize();
+                for (int i = 0; i < primary_active_pixels.size(); i++) {
+                    auto c = 1;
+                    auto pixel_id = primary_active_pixels[i];
+                    auto d_v0 = d_primary_vertices[3 * i + 0];
+                    auto d_v1 = d_primary_vertices[3 * i + 1];
+                    auto d_v2 = d_primary_vertices[3 * i + 2];
+                    if (d_v0.shape_id == 6) {
+                        debug_image[3 * pixel_id + 0] += (d_v0.d_v[c] + d_v1.d_v[c] + d_v2.d_v[c]);
+                        debug_image[3 * pixel_id + 1] += (d_v0.d_v[c] + d_v1.d_v[c] + d_v2.d_v[c]);
+                        debug_image[3 * pixel_id + 2] += (d_v0.d_v[c] + d_v1.d_v[c] + d_v2.d_v[c]);
+                    }
+                }*/
 
                 // for (int i = 0; i < primary_active_pixels.size(); i++) {
                 //     auto pixel_id = primary_active_pixels[i];
@@ -2811,4 +2876,10 @@ void render(const Scene &scene,
     }
     channel_info.free();
     parallel_cleanup();
+
+#ifdef __NVCC__
+    if (old_device_id != -1) {
+        checkCuda(cudaSetDevice(old_device_id));
+    }
+#endif
 }

@@ -36,13 +36,16 @@ if(NOT CUDA_FOUND)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_CPP")
 endif()
 
-set(SRCS active_pixels.h
+set(SRCS aabb.h
+         active_pixels.h
          area_light.h
+         atomic.h
          buffer.h
          camera.h
          channels.h
          cuda_utils.h
          edge.h
+         edge_tree.h
          envmap.h
          frame.h
          intersection.h
@@ -64,11 +67,13 @@ set(SRCS active_pixels.h
          texture.h
          transform.h
          vector.h
+         aabb.cpp
          active_pixels.cpp
          area_light.cpp
          camera.cpp
          channels.cpp
          edge.cpp
+         edge_tree.cpp
          envmap.cpp
          load_serialized.cpp
          material.cpp
@@ -98,12 +103,14 @@ endif()
 if(CUDA_FOUND)
     add_compile_definitions(COMPILE_WITH_CUDA)
     set_source_files_properties(
+        aabb.cpp
         active_pixels.cpp
+        area_light.cpp
         camera.cpp
         channels.cpp
         edge.cpp
+        edge_tree.cpp
         envmap.cpp
-        area_light.cpp
         material.cpp
         parallel.cpp
         pathtracer.cpp

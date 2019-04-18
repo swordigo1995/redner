@@ -22,6 +22,8 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+#include <cstdint>
+
 // We use Real for most of the internal computation.
 // However, for PyTorch interfaces, Optix Prime and Embree queries
 // we use float
@@ -85,7 +87,7 @@ inline int idiv_ceil(int x, int y) {
 
 template <typename T>
 DEVICE
-inline void swap(T &a, T &b) {
+inline void swap_(T &a, T &b) {
     T tmp = a;
     a = b;
     b = tmp;
@@ -101,4 +103,34 @@ inline T safe_acos(const T &x) {
     if (x >= 1) return T(0);
     else if(x <= -1) return T(M_PI);
     return acos(x);
+}
+
+DEVICE
+inline int clz(uint64_t x) {
+#ifdef __CUDA_ARCH__
+    return __clzll(x);
+#else
+    // TODO: use _BitScanReverse in windows
+    return x == 0 ? 64 : __builtin_clzll(x);
+#endif
+}
+
+DEVICE
+inline int ffs(uint8_t x) {
+#ifdef __CUDA_ARCH__
+    return __ffs(x);
+#else
+    // TODO: use _BitScanReverse in windows
+    return __builtin_ffs(x);
+#endif
+}
+
+DEVICE
+inline int popc(uint8_t x) {
+#ifdef __CUDA_ARCH__
+    return __popc(x);
+#else
+    // TODO: use _popcnt in windows
+    return __builtin_popcount(x);
+#endif
 }
