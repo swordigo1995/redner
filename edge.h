@@ -93,19 +93,34 @@ inline Vector3f get_non_shared_v0(
             return get_vertex(shapes[edge.shape_id], ind[i]);
         }
     }
-    return Vector3{0.f, 0.f, 0.f};
+    return get_v0(shapes, edge);
 }
 
 DEVICE
 inline Vector3f get_non_shared_v1(
         const Shape *shapes, const Edge &edge) {
+    // Unfotunately the below wouldn't work because we sometimes
+    // merge edge's faces when there are duplicated edges
+
+    // auto ind = get_indices(shapes[edge.shape_id], edge.f1);
+    // for (int i = 0; i < 3; i++) {
+    //     if (ind[i] != edge.v0 && ind[i] != edge.v1) {
+    //         return get_vertex(shapes[edge.shape_id], ind[i]);
+    //     }
+    // }
+    // return Vector3{0.f, 0.f, 0.f};
+
+    // So we have to go for a slightly more expensive alternative
     auto ind = get_indices(shapes[edge.shape_id], edge.f1);
+    auto v0 = get_v0(shapes, edge);
+    auto v1 = get_v1(shapes, edge);
     for (int i = 0; i < 3; i++) {
-        if (ind[i] != edge.v0 && ind[i] != edge.v1) {
-            return get_vertex(shapes[edge.shape_id], ind[i]);
+        auto v = get_vertex(shapes[edge.shape_id], ind[i]);
+        if (v != v0 && v != v1) {
+            return v;
         }
     }
-    return Vector3{0.f, 0.f, 0.f};
+    return v1;
 }
 
 DEVICE
@@ -113,7 +128,13 @@ inline Vector3 get_n0(const Shape *shapes, const Edge &edge) {
     auto v0 = Vector3{get_v0(shapes, edge)};
     auto v1 = Vector3{get_v1(shapes, edge)};
     auto ns_v0 = Vector3{get_non_shared_v0(shapes, edge)};
-    return normalize(cross(v0 - ns_v0, v1 - ns_v0));
+    auto n = cross(v0 - ns_v0, v1 - ns_v0);
+    auto n_len_sq = length_squared(n);
+    if (n_len_sq < Real(1e-20)) {
+        return Vector3{0, 0, 0};
+    }
+    n /= sqrt(n_len_sq);
+    return n;
 }
 
 DEVICE
@@ -121,21 +142,54 @@ inline Vector3 get_n1(const Shape *shapes, const Edge &edge) {
     auto v0 = Vector3{get_v0(shapes, edge)};
     auto v1 = Vector3{get_v1(shapes, edge)};
     auto ns_v1 = Vector3{get_non_shared_v1(shapes, edge)};
-    return normalize(cross(v1 - ns_v1, v0 - ns_v1));
+    auto n = cross(v1 - ns_v1, v0 - ns_v1);
+    auto n_len_sq = length_squared(n);
+    if (n_len_sq < Real(1e-20)) {
+        return Vector3{0, 0, 0};
+    }
+    n /= sqrt(n_len_sq);
+    return n;
+
 }
 
 DEVICE
 inline bool is_silhouette(const Shape *shapes, const Vector3 &p, const Edge &edge) {
-    if (edge.f0 == -1 || edge.f1 == -1) {
-        // Only adjacent to one face
-        return true;
-    }
     auto v0 = Vector3{get_v0(shapes, edge)};
     auto v1 = Vector3{get_v1(shapes, edge)};
+    if (edge.f0 == -1 || edge.f1 == -1) {
+        // Only adjacent to one face
+        if (edge.f0 != -1) {
+            auto ns_v0 = Vector3{get_non_shared_v0(shapes, edge)};
+            auto n0 = cross(v0 - ns_v0, v1 - ns_v0);
+            auto n0_len_sq = length_squared(n0);
+            if (n0_len_sq < Real(1e-20)) {
+                // Degenerate vertices
+                return false;
+            }
+        }
+        if (edge.f1 != -1) {
+            auto ns_v1 = Vector3{get_non_shared_v1(shapes, edge)};
+            auto n1 = cross(v1 - ns_v1, v0 - ns_v1);
+            auto n1_len_sq = length_squared(n1);
+            if (n1_len_sq < Real(1e-20)) {
+                // Degenerate vertices
+                return false;
+            }
+        }
+        return true;
+    }
     auto ns_v0 = Vector3{get_non_shared_v0(shapes, edge)};
     auto ns_v1 = Vector3{get_non_shared_v1(shapes, edge)};
-    auto n0 = normalize(cross(v0 - ns_v0, v1 - ns_v0));
-    auto n1 = normalize(cross(v1 - ns_v1, v0 - ns_v1));
+    auto n0 = cross(v0 - ns_v0, v1 - ns_v0);
+    auto n1 = cross(v1 - ns_v1, v0 - ns_v1);
+    auto n0_len_sq = length_squared(n0);
+    auto n1_len_sq = length_squared(n1);
+    if (n0_len_sq < Real(1e-20) || n1_len_sq < Real(1e-20)) {
+        // Degenerate vertices
+        return false;
+    }
+    n0 /= sqrt(n0_len_sq);
+    n1 /= sqrt(n1_len_sq);
     if (!has_shading_normals(shapes[edge.shape_id])) {
         // If we are not using Phong normal, every edge is silhouette,
         // except edges with dihedral angle of 0
@@ -185,6 +239,8 @@ inline Real compute_exterior_dihedral_angle(const Shape *shapes, const Edge &edg
     }
     return exterior_dihedral;
 }
+
+void initialize_ltc_table(bool use_gpu);
 
 void sample_primary_edges(const Scene &scene,
                           const BufferView<PrimaryEdgeSample> &samples,
@@ -245,4 +301,3 @@ void accumulate_secondary_edge_derivatives(const Scene &scene,
                                            const BufferView<Real> &edge_contribs,
                                            BufferView<SurfacePoint> d_points,
                                            BufferView<DVertex> d_vertices);
-

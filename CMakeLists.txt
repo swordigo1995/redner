@@ -16,9 +16,11 @@ if(CUDA_FOUND)
 else()
     find_package(Thrust REQUIRED)
 endif()
-find_package(Embree REQUIRED)
+find_package(Embree)
 if(NOT EMBREE_FOUND)
     add_subdirectory(embree)
+    set(EMBREE_INCLUDE_PATH "${PROJECT_SOURCE_DIR}/embree/include")
+    set(EMBREE_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/embree/libembree3.so")
 endif()
 
 include_directories(${Python_INCLUDE_DIRS})
@@ -30,7 +32,7 @@ else()
     include_directories(${THRUST_INCLUDE_DIR})
 endif()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -Wall -g -O3 -fvisibility=hidden")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -g -O3 -fvisibility=hidden")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -Wall -g -O3 -fvisibility=hidden")
 if(NOT CUDA_FOUND)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_CPP")
@@ -40,6 +42,7 @@ set(SRCS aabb.h
          active_pixels.h
          area_light.h
          atomic.h
+         bsdf_sample.h
          buffer.h
          camera.h
          channels.h
@@ -55,14 +58,20 @@ set(SRCS aabb.h
          matrix.h
          miniz.h
          parallel.h
+         path_contribution.h
          pathtracer.h
+         pcg_sampler.h
+         primary_contribution.h
+         primary_intersection.h
          ptr.h
          py_utils.h
          ray.h
+         rebuild_topology.h
          redner.h
          sampler.h
          scene.h
          shape.h
+         sobol_sampler.h
          test_utils.h
          texture.h
          transform.h
@@ -70,6 +79,7 @@ set(SRCS aabb.h
          aabb.cpp
          active_pixels.cpp
          area_light.cpp
+         bsdf_sample.cpp
          camera.cpp
          channels.cpp
          edge.cpp
@@ -79,11 +89,16 @@ set(SRCS aabb.h
          material.cpp
          miniz.c
          parallel.cpp
+         path_contribution.cpp
          pathtracer.cpp
+         pcg_sampler.cpp
+         primary_contribution.cpp
+         primary_intersection.cpp
+         rebuild_topology.cpp
          redner.cpp
-         sampler.cpp
          scene.cpp
-         shape.cpp)
+         shape.cpp
+         sobol_sampler.cpp)
 
 if(APPLE)
     # The "-undefined dynamic_lookup" is a hack for systems with
@@ -106,6 +121,7 @@ if(CUDA_FOUND)
         aabb.cpp
         active_pixels.cpp
         area_light.cpp
+        bsdf_sample.cpp
         camera.cpp
         channels.cpp
         edge.cpp
@@ -113,10 +129,14 @@ if(CUDA_FOUND)
         envmap.cpp
         material.cpp
         parallel.cpp
+        path_contribution.cpp
         pathtracer.cpp
-        sampler.cpp
+        pcg_sampler.cpp
+        primary_contribution.cpp
+        primary_intersection.cpp
         scene.cpp
         shape.cpp
+        sobol_sampler.cpp
         PROPERTIES CUDA_SOURCE_PROPERTY_FORMAT OBJ)
     set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -std=c++14")
 

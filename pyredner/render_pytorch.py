@@ -33,10 +33,43 @@ class RenderFunction(torch.autograd.Function):
     def serialize_scene(scene,
                         num_samples,
                         max_bounces,
-                        channels = [redner.channels.radiance]):
+                        channels = [redner.channels.radiance],
+                        sampler_type = redner.SamplerType.independent,
+                        use_primary_edge_sampling = True,
+                        use_secondary_edge_sampling = True):
         """
-            Given a PyRedner scene, convert it to a linear list of argument,
+            Given a PyRedner scene & rendering options, convert them to a linear list of argument,
             so that we can use it in PyTorch.
+
+            Keyword arguments:
+            scene -- A pyredner.Scene
+            num_samples -- Number of samples per pixel for forward and backward passes,
+                           can be an integer or a tuple of 2 integers.
+            max_bounces -- Number of bounces for global illumination, 1 means direct lighting only.
+            channels -- A list of channels that should present in the output image.
+                        Following channels are supported:
+                            redner.channels.radiance,
+                            redner.channels.alpha,
+                            redner.channels.depth,
+                            redner.channels.position,
+                            redner.channels.geometry_normal,
+                            redner.channels.shading_normal,
+                            redner.channels.uv,
+                            redner.channels.diffuse_reflectance,
+                            redner.channels.specular_reflectance,
+                            redner.channels.roughness,
+                            redner.channels.shape_id,
+                            redner.channels.material_id
+                        All channels, except for shape id and material id, are differentiable.
+            sampler_type -- Which sampling pattern to use.
+                            See Chapter 7 of the PBRT book for an explanation of the difference between
+                            different samplers.
+                            http://www.pbr-book.org/3ed-2018/Sampling_and_Reconstruction.html
+                            Following samplers are supported:
+                                redner.SamplerType.independent
+                                redner.SamplerType.sobol
+            use_primary_edge_sampling -- A boolean
+            use_secondary_edge_sampling -- A boolean
         """
         cam = scene.camera
         num_shapes = len(scene.shapes)
@@ -48,8 +81,9 @@ class RenderFunction(torch.autograd.Function):
         args.append(num_shapes)
         args.append(num_materials)
         args.append(num_lights)
-        args.append(cam.cam_to_world)
-        args.append(cam.world_to_cam)
+        args.append(cam.position)
+        args.append(cam.look_at)
+        args.append(cam.up)
         args.append(cam.ndc_to_cam)
         args.append(cam.cam_to_ndc)
         args.append(cam.clip_near)
@@ -93,6 +127,9 @@ class RenderFunction(torch.autograd.Function):
         args.append(num_samples)
         args.append(max_bounces)
         args.append(channels)
+        args.append(sampler_type)
+        args.append(use_primary_edge_sampling)
+        args.append(use_secondary_edge_sampling)
 
         return args
     
@@ -111,9 +148,11 @@ class RenderFunction(torch.autograd.Function):
         current_index += 1
         num_lights = args[current_index]
         current_index += 1
-        cam_to_world = args[current_index]
+        cam_position = args[current_index]
         current_index += 1
-        world_to_cam = args[current_index]
+        cam_look_at = args[current_index]
+        current_index += 1
+        cam_up = args[current_index]
         current_index += 1
         ndc_to_cam = args[current_index]
         current_index += 1
@@ -125,12 +164,11 @@ class RenderFunction(torch.autograd.Function):
         current_index += 1
         fisheye = args[current_index]
         current_index += 1
-        assert(cam_to_world.is_contiguous())
-        assert(world_to_cam.is_contiguous())
         camera = redner.Camera(resolution[1],
                                resolution[0],
-                               redner.float_ptr(cam_to_world.data_ptr()),
-                               redner.float_ptr(world_to_cam.data_ptr()),
+                               redner.float_ptr(cam_position.data_ptr()),
+                               redner.float_ptr(cam_look_at.data_ptr()),
+                               redner.float_ptr(cam_up.data_ptr()),
                                redner.float_ptr(ndc_to_cam.data_ptr()),
                                redner.float_ptr(cam_to_ndc.data_ptr()),
                                clip_near,
@@ -269,6 +307,20 @@ class RenderFunction(torch.autograd.Function):
         else:
             current_index += 7
 
+        # Options
+        num_samples = args[current_index]
+        current_index += 1
+        max_bounces = args[current_index]
+        current_index += 1
+        channels = args[current_index]
+        current_index += 1
+        sampler_type = args[current_index]
+        current_index += 1
+        use_primary_edge_sampling = args[current_index]
+        current_index += 1
+        use_secondary_edge_sampling = args[current_index]
+        current_index += 1
+
         start = time.time()
         scene = redner.Scene(camera,
                              shapes,
@@ -276,23 +328,18 @@ class RenderFunction(torch.autograd.Function):
                              area_lights,
                              envmap,
                              pyredner.get_use_gpu(),
-                             pyredner.get_device().index if pyredner.get_device().index is not None else -1)
+                             pyredner.get_device().index if pyredner.get_device().index is not None else -1,
+                             use_primary_edge_sampling,
+                             use_secondary_edge_sampling)
         time_elapsed = time.time() - start
         if print_timing:
             print('Scene construction, time: %.5f s' % time_elapsed)
-
-        num_samples = args[current_index]
-        current_index += 1
-        max_bounces = args[current_index]
-        current_index += 1
-        channels = args[current_index]
-        current_index += 1
 
         # check that num_samples is a tuple
         if isinstance(num_samples, int):
             num_samples = (num_samples, num_samples)
 
-        options = redner.RenderOptions(seed, num_samples[0], max_bounces, channels)
+        options = redner.RenderOptions(seed, num_samples[0], max_bounces, channels, sampler_type)
         num_channels = redner.compute_num_channels(channels)
         rendered_image = torch.zeros(resolution[0], resolution[1], num_channels,
             device = pyredner.get_device())
@@ -335,12 +382,14 @@ class RenderFunction(torch.autograd.Function):
         scene = ctx.scene
         options = ctx.options
 
-        d_cam_to_world = torch.zeros(4, 4)
-        d_world_to_cam = torch.zeros(4, 4)
+        d_cam_position = torch.zeros(3)
+        d_cam_look = torch.zeros(3)
+        d_cam_up = torch.zeros(3)
         d_ndc_to_cam = torch.zeros(3, 3)
         d_cam_to_ndc = torch.zeros(3, 3)
-        d_camera = redner.DCamera(redner.float_ptr(d_cam_to_world.data_ptr()),
-                                  redner.float_ptr(d_world_to_cam.data_ptr()),
+        d_camera = redner.DCamera(redner.float_ptr(d_cam_position.data_ptr()),
+                                  redner.float_ptr(d_cam_look.data_ptr()),
+                                  redner.float_ptr(d_cam_up.data_ptr()),
                                   redner.float_ptr(d_ndc_to_cam.data_ptr()),
                                   redner.float_ptr(d_cam_to_ndc.data_ptr()))
         d_vertices_list = []
@@ -465,7 +514,7 @@ class RenderFunction(torch.autograd.Function):
 
         # # For debugging
         # # pyredner.imwrite(grad_img, 'grad_img.exr')
-        # grad_img = torch.ones(256, 256, 3, device = pyredner.get_device())
+        # # grad_img = torch.ones(256, 256, 3, device = pyredner.get_device())
         # debug_img = torch.zeros(256, 256, 3)
         # start = time.time()
         # redner.render(scene, options,
@@ -480,7 +529,10 @@ class RenderFunction(torch.autograd.Function):
         # pyredner.imwrite(-debug_img, 'debug_.exr')
         # debug_img = debug_img.numpy()
         # print(np.max(debug_img))
+        # print(np.unravel_index(np.argmax(debug_img), debug_img.shape))
         # print(np.min(debug_img))
+        # print(np.unravel_index(np.argmin(debug_img), debug_img.shape))
+        # print(np.sum(debug_img) / 3)
         # debug_max = 0.5
         # debug_min = -0.5
         # debug_img = np.clip((debug_img - debug_min) / (debug_max - debug_min), 0, 1)
@@ -495,8 +547,9 @@ class RenderFunction(torch.autograd.Function):
         ret_list.append(None) # num_shapes
         ret_list.append(None) # num_materials
         ret_list.append(None) # num_lights
-        ret_list.append(d_cam_to_world)
-        ret_list.append(d_world_to_cam)
+        ret_list.append(d_cam_position)
+        ret_list.append(d_cam_look)
+        ret_list.append(d_cam_up)
         ret_list.append(d_ndc_to_cam)
         ret_list.append(d_cam_to_ndc)
         ret_list.append(None) # clip near
@@ -548,5 +601,8 @@ class RenderFunction(torch.autograd.Function):
         ret_list.append(None) # num samples
         ret_list.append(None) # num bounces
         ret_list.append(None) # channels
+        ret_list.append(None) # sampler type
+        ret_list.append(None) # use_primary_edge_sampling
+        ret_list.append(None) # use_secondary_edge_sampling
 
         return tuple(ret_list)

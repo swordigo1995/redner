@@ -61,6 +61,8 @@ struct edge_6d_bounds_computer {
             d_min[i] = min(h0[i], h1[i]);
             d_max[i] = max(h0[i], h1[i]);
         }
+        assert(isfinite(d_min));
+        assert(isfinite(d_max));
         edge_aabbs[idx].d_min = d_min;
         edge_aabbs[idx].d_max = d_max;
     }
@@ -102,7 +104,7 @@ struct id_to_edge_pt_abs {
             v0_abs[i] = fabs(v0[i] - mean[i]);
             v1_abs[i] = fabs(v1[i] - mean[i]);
         }
-        return v0 + v1;
+        return v0_abs + v1_abs;
     }
 
     const Shape *shapes;
@@ -490,6 +492,7 @@ struct bvh_optimizer {
                                           uint8_t *p_opt) {
         // Algorithm 2 in Karras et al.
         auto num_subsets = (0x1 << n) - 1;
+        assert(num_subsets < 128);
         // TODO: move the following two arrays into shared memory
         Real a[128];
         Real c_opt[128];
@@ -591,6 +594,7 @@ struct bvh_optimizer {
                 leaf->parent = parent;
             } else {
                 // Internal
+                assert(index < 5);
                 auto node = nodes[index++];
                 node->cost = -1;
                 parent->children[child_id] = node;
@@ -638,6 +642,7 @@ struct bvh_optimizer {
 
             if (max_idx != -1) {
                 BVHNodeType *tmp = leaves[max_idx];
+                assert(nodes_counter < 5);
                 nodes[nodes_counter++] = tmp;
 
                 leaves[max_idx] = leaves[counter - 1];
@@ -671,6 +676,7 @@ struct bvh_optimizer {
     DEVICE void operator()(int idx) {
         auto leaf = &leaves[idx];
         leaf->cost = Ci * surface_area(leaf->bounds);
+        assert(isfinite(leaf->cost));
         auto current = leaf->parent;
         auto node_idx = current - nodes;
         if (current != nullptr) {
@@ -757,7 +763,7 @@ EdgeTree::EdgeTree(bool use_gpu,
         id_to_edge_pt_abs{shapes.begin(), edges.begin(), edge_pt_mean},
         Vector3{0, 0, 0}, sum_vec3{});
     edge_pt_mad /= Real(edge_ids.size());
-    edge_bounds_expand = 0.02f * length(edge_pt_mad);
+    edge_bounds_expand = 0.01f * length(edge_pt_mad);
 
     // We build a 3D BVH over the camera silhouette edges, and build
     // a 6D BVH over the non camera silhouette edges

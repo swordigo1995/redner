@@ -64,8 +64,12 @@ Scene::Scene(const Camera &camera,
              const std::vector<const AreaLight*> &area_lights,
              const std::shared_ptr<const EnvironmentMap> &envmap,
              bool use_gpu,
-             int gpu_index)
-        : camera(camera), use_gpu(use_gpu), gpu_index(gpu_index) {
+             int gpu_index,
+             bool use_primary_edge_sampling,
+             bool use_secondary_edge_sampling)
+        : camera(camera), use_gpu(use_gpu), gpu_index(gpu_index),
+          use_primary_edge_sampling(use_primary_edge_sampling),
+          use_secondary_edge_sampling(use_secondary_edge_sampling) {
 #ifdef __NVCC__
     int old_device_id = -1;
 #endif
@@ -265,9 +269,6 @@ Scene::Scene(const Camera &camera,
     } else {
         this->envmap = nullptr;
     }
-
-    // Create a mutex for each material for derivatives accumulation
-    material_mutexes = std::vector<std::mutex>(materials.size());
 
     edge_sampler = EdgeSampler(shapes, *this);
 
@@ -759,7 +760,20 @@ void test_scene_intersect(bool use_gpu) {
                    1, // num_triangles
                    0,
                    -1};
-    Scene scene{Camera{}, {&triangle}, {}, {}, {}, use_gpu, 0};
+    auto pos = Vector3f{0, 0, 0};
+    auto look = Vector3f{0, 0, 1};
+    auto up = Vector3f{0, 1, 0};
+    Matrix3x3f n2c = Matrix3x3f::identity();
+    Matrix3x3f c2n = Matrix3x3f::identity();
+    Camera camera{1, 1,
+        &pos[0],
+        &look[0],
+        &up[0],
+        &n2c.data[0][0],
+        &c2n.data[0][0],
+        1e-2f,
+        false};
+    Scene scene{camera, {&triangle}, {}, {}, {}, use_gpu, 0, false, false};
     parallel_init();
 
     Buffer<int> active_pixels(use_gpu, 2);
@@ -842,9 +856,21 @@ void test_sample_point_on_light(bool use_gpu) {
     auto materials = std::make_shared<std::vector<const Material *>>();
     auto lights = std::make_shared<std::vector<const AreaLight *>>(
         std::vector<const AreaLight*>{&light0, &light1});
-    std::shared_ptr<Camera> camera = std::make_shared<Camera>();
 
-    Scene scene{Camera{}, {&shape0, &shape1}, {}, {&light0, &light1}, {}, use_gpu, 0};
+    auto pos = Vector3f{0, 0, 0};
+    auto look = Vector3f{0, 0, 1};
+    auto up = Vector3f{0, 1, 0};
+    Matrix3x3f n2c = Matrix3x3f::identity();
+    Matrix3x3f c2n = Matrix3x3f::identity();
+    Camera camera{1, 1,
+        &pos[0],
+        &look[0],
+        &up[0],
+        &n2c.data[0][0],
+        &c2n.data[0][0],
+        1e-2f,
+        false};
+    Scene scene{camera, {&shape0, &shape1}, {}, {&light0, &light1}, {}, use_gpu, 0, false, false};
     cuda_synchronize();
     // Power of the first light source: 1.5
     // Power of the second light source: 2

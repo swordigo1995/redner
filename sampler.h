@@ -7,25 +7,18 @@
 #include "material.h"
 #include "edge.h"
 
-struct pcg32_state {
-    uint64_t state;
-    uint64_t inc;
-};
-
 struct Sampler {
-    Sampler(bool use_gpu, uint64_t seed, int num_pixels);
+    virtual ~Sampler() {}
+    virtual void begin_sample(int sample_id) {};
 
-    void next_camera_samples(BufferView<TCameraSample<float>> samples);
-    void next_camera_samples(BufferView<TCameraSample<double>> samples);
-    void next_light_samples(BufferView<TLightSample<float>> samples);
-    void next_light_samples(BufferView<TLightSample<double>> samples);
-    void next_bsdf_samples(BufferView<TBSDFSample<float>> samples);
-    void next_bsdf_samples(BufferView<TBSDFSample<double>> samples);
-    void next_primary_edge_samples(BufferView<TPrimaryEdgeSample<float>> samples);
-    void next_primary_edge_samples(BufferView<TPrimaryEdgeSample<double>> samples);
-    void next_secondary_edge_samples(BufferView<TSecondaryEdgeSample<float>> samples);
-    void next_secondary_edge_samples(BufferView<TSecondaryEdgeSample<double>> samples);
-
-    bool use_gpu;
-    Buffer<pcg32_state> rng_states;
+    virtual void next_camera_samples(BufferView<TCameraSample<float>> samples) = 0;
+    virtual void next_camera_samples(BufferView<TCameraSample<double>> samples) = 0;
+    virtual void next_light_samples(BufferView<TLightSample<float>> samples) = 0;
+    virtual void next_light_samples(BufferView<TLightSample<double>> samples) = 0;
+    virtual void next_bsdf_samples(BufferView<TBSDFSample<float>> samples) = 0;
+    virtual void next_bsdf_samples(BufferView<TBSDFSample<double>> samples) = 0;
+    virtual void next_primary_edge_samples(BufferView<TPrimaryEdgeSample<float>> samples) = 0;
+    virtual void next_primary_edge_samples(BufferView<TPrimaryEdgeSample<double>> samples) = 0;
+    virtual void next_secondary_edge_samples(BufferView<TSecondaryEdgeSample<float>> samples) = 0;
+    virtual void next_secondary_edge_samples(BufferView<TSecondaryEdgeSample<double>> samples) = 0;
 };

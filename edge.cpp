@@ -18,6 +18,28 @@ constexpr bool c_use_edge_tree = true;
 constexpr bool c_uniform_sampling = false;
 constexpr bool c_use_nee_ray = true;
 
+namespace ltc {
+
+const float *tabMcpu = &tabM_[0];
+const float *tabMgpu = nullptr;
+const float *tabM = nullptr;
+
+}
+
+void initialize_ltc_table(bool use_gpu) {
+    ltc::tabM = use_gpu ? ltc::tabMgpu : ltc::tabMcpu;
+    if (use_gpu && ltc::tabM == nullptr) {
+#ifdef __CUDACC__
+        checkCuda(cudaMallocManaged(&ltc::tabMgpu, sizeof(ltc::tabM_)));
+        checkCuda(cudaMemcpy((void*)ltc::tabMgpu,
+                             (void*)ltc::tabM_, sizeof(ltc::tabM_), cudaMemcpyHostToDevice));
+        ltc::tabM = ltc::tabMgpu;
+#else
+        assert(false);
+#endif 
+    }
+}
+
 struct edge_collector {
     DEVICE inline void operator()(int idx) {
         const auto &shape = *shape_ptr;
@@ -65,6 +87,82 @@ struct edge_merger {
     DEVICE inline Edge operator()(const Edge &e0, const Edge &e1) {
         return Edge{e0.shape_id, e0.v0, e0.v1, e0.f0, e1.f0};
     }
+};
+
+DEVICE inline bool less_than(const Vector3f &v0, const Vector3f &v1) {
+    if (v0.x != v1.x) {
+        return v0.x < v1.x;
+    } else if (v0.y != v1.y) {
+        return v0.y < v1.y;
+    } else if (v0.z != v1.z) {
+        return v0.z < v1.z;
+    }
+    return true;
+}
+
+struct edge_vertex_comparer {
+    DEVICE inline bool operator()(const Edge &e0, const Edge &e1) {
+        // First, locally sort v0 & v1 within e0 & e1
+        auto v00 = get_vertex(*shape_ptr, e0.v0);
+        auto v01 = get_vertex(*shape_ptr, e0.v1);
+        if (less_than(v01, v00)) {
+            swap_(v00, v01);
+        }
+        auto v10 = get_vertex(*shape_ptr, e1.v0);
+        auto v11 = get_vertex(*shape_ptr, e1.v1);
+        if (less_than(v11, v10)) {
+            swap_(v10, v11);
+        }
+        // Next, compare and return
+        if (v00 != v10) {
+            return less_than(v00, v10);
+        } else if (v01 != v11) {
+            return less_than(v01, v11);
+        }
+        return true;
+    }
+
+    const Shape *shape_ptr;
+};
+
+struct edge_face_assigner {
+    DEVICE void operator()(int idx) {
+        auto &edge = edges[idx];
+        if (edge.f1 != -1) {
+            return;
+        }
+        auto v0 = get_vertex(*shape_ptr, edge.v0);
+        auto v1 = get_vertex(*shape_ptr, edge.v1);
+        if (less_than(v1, v0)) {
+            swap_(v0, v1);
+        }
+        if (idx > 0) {
+            const auto &cmp_edge = edges[idx - 1];
+            auto cmp_v0 = get_vertex(*shape_ptr, cmp_edge.v0);
+            auto cmp_v1 = get_vertex(*shape_ptr, cmp_edge.v1);
+            if (less_than(cmp_v1, cmp_v0)) {
+                swap_(cmp_v0, cmp_v1);
+            }
+            if (v0 == cmp_v0 && v1 == cmp_v1) {
+                edge.f1 = cmp_edge.f0;
+            }
+        }
+        if (idx < num_edges - 1) {
+            const auto &cmp_edge = edges[idx + 1];
+            auto cmp_v0 = get_vertex(*shape_ptr, cmp_edge.v0);
+            auto cmp_v1 = get_vertex(*shape_ptr, cmp_edge.v1);
+            if (less_than(cmp_v1, cmp_v0)) {
+                swap_(cmp_v0, cmp_v1);
+            }
+            if (v0 == cmp_v0 && v1 == cmp_v1) {
+                edge.f1 = cmp_edge.f0;
+            }
+        }
+    }
+
+    const Shape *shape_ptr;
+    Edge *edges;
+    int num_edges;
 };
 
 struct edge_remover {
@@ -134,6 +232,10 @@ struct secondary_edge_weighter {
 
 EdgeSampler::EdgeSampler(const std::vector<const Shape*> &shapes,
                          const Scene &scene) {
+    if (!scene.use_primary_edge_sampling && !scene.use_secondary_edge_sampling) {
+        // No need to collect edges
+        return;
+    }
     auto shapes_buffer = scene.shapes.view(0, shapes.size());
     // Conservatively allocate a big buffer for all edges
     auto num_total_triangles = 0;
@@ -142,7 +244,9 @@ EdgeSampler::EdgeSampler(const std::vector<const Shape*> &shapes,
     }
     // Collect the edges
     // TODO: this assumes each edge is only associated with two triangles
-    //       which may be untrue for some pathological meshes
+    //       which may be untrue for some pathological meshes.
+    //       For edges associated to more than two triangles, 
+    //       we should just ignore them
     edges = Buffer<Edge>(scene.use_gpu, 3 * num_total_triangles);
     auto edges_buffer = Buffer<Edge>(scene.use_gpu, 3 * num_total_triangles);
     auto current_num_edges = 0;
@@ -168,92 +272,113 @@ EdgeSampler::EdgeSampler(const std::vector<const Shape*> &shapes,
             edge_equal_comparer{},
             edge_merger{}).first;
         auto num_edges = new_end - edges_buffer_begin;
+        // Sometimes there are duplicated edges that don't get merged 
+        // in the procedure above (e.g. UV seams), here we make sure these edges
+        // are associated with two faces.
+        // We do this by sorting the edges again based on vertex positions,
+        // look at nearby edges and assign faces.
+        DISPATCH(scene.use_gpu, thrust::sort,
+                 edges_buffer_begin,
+                 edges_buffer_begin + num_edges,
+                 edge_vertex_comparer{shapes_buffer.begin() + shape_id});
+        parallel_for(edge_face_assigner{
+            shapes_buffer.begin() + shape_id,
+            edges_buffer_begin,
+            (int)num_edges
+        }, num_edges, scene.use_gpu);
+
         DISPATCH(scene.use_gpu, thrust::copy, edges_buffer_begin, new_end, edges_begin);
         current_num_edges += num_edges;
     }
+    // Remove edges with 180 degree dihedral angles
     auto edges_end = DISPATCH(scene.use_gpu, thrust::remove_if, edges.begin(),
         edges.begin() + current_num_edges, edge_remover{shapes_buffer.begin()});
     edges.count = edges_end - edges.begin();
-    // Primary edge sampler:
-    primary_edges_pmf = Buffer<Real>(scene.use_gpu, edges.count);
-    primary_edges_cdf = Buffer<Real>(scene.use_gpu, edges.count);
-    // For each edge, if it is a silhouette, we project them on screen
-    // and compute the screen-space length. We store the length in
-    // primary_edges_pmf
-    {
-        parallel_for(primary_edge_weighter{
-            scene.camera,
-            scene.shapes.data,
-            edges.begin(),
-            primary_edges_pmf.begin()
-        }, edges.size(), scene.use_gpu);
-        // Compute PMF & CDF
-        // First normalize primary_edges_pmf.
-        auto total_length = DISPATCH(scene.use_gpu, thrust::reduce,
-            primary_edges_pmf.begin(),
-            primary_edges_pmf.end(),
-            Real(0),
-            thrust::plus<Real>());
-        DISPATCH(scene.use_gpu, thrust::transform,
-            primary_edges_pmf.begin(),
-            primary_edges_pmf.end(),
-            thrust::make_constant_iterator(total_length),
-            primary_edges_pmf.begin(),
-            thrust::divides<Real>());
-        // Next we compute a prefix sum
-        DISPATCH(scene.use_gpu, thrust::transform_exclusive_scan,
-            primary_edges_pmf.begin(),
-            primary_edges_pmf.end(),
-            primary_edges_cdf.begin(),
-            thrust::identity<Real>(), Real(0), thrust::plus<Real>());
-    }
 
-    // Secondary edge sampler
-    if (!c_use_edge_tree) {
-        // Build a global distribution if we are not using edge tree
-        secondary_edges_pmf = Buffer<Real>(scene.use_gpu, edges.count);
-        secondary_edges_cdf = Buffer<Real>(scene.use_gpu, edges.count);
-        // For each edge we compute the length and store the length in 
-        // secondary_edges_pmf
-        parallel_for(secondary_edge_weighter{
-            scene.shapes.data,
-            edges.begin(),
-            secondary_edges_pmf.begin()
-        }, edges.size(), scene.use_gpu);
+    if (scene.use_primary_edge_sampling) {
+        // Primary edge sampler:
+        primary_edges_pmf = Buffer<Real>(scene.use_gpu, edges.count);
+        primary_edges_cdf = Buffer<Real>(scene.use_gpu, edges.count);
+        // For each edge, if it is a silhouette, we project them on screen
+        // and compute the screen-space length. We store the length in
+        // primary_edges_pmf
         {
+            parallel_for(primary_edge_weighter{
+                scene.camera,
+                scene.shapes.data,
+                edges.begin(),
+                primary_edges_pmf.begin()
+            }, edges.size(), scene.use_gpu);
             // Compute PMF & CDF
-            // First normalize secondary_edges_pmf.
+            // First normalize primary_edges_pmf.
             auto total_length = DISPATCH(scene.use_gpu, thrust::reduce,
-                secondary_edges_pmf.begin(),
-                secondary_edges_pmf.end(),
+                primary_edges_pmf.begin(),
+                primary_edges_pmf.end(),
                 Real(0),
                 thrust::plus<Real>());
             DISPATCH(scene.use_gpu, thrust::transform,
-                secondary_edges_pmf.begin(),
-                secondary_edges_pmf.end(),
+                primary_edges_pmf.begin(),
+                primary_edges_pmf.end(),
                 thrust::make_constant_iterator(total_length),
-                secondary_edges_pmf.begin(),
+                primary_edges_pmf.begin(),
                 thrust::divides<Real>());
             // Next we compute a prefix sum
             DISPATCH(scene.use_gpu, thrust::transform_exclusive_scan,
-                secondary_edges_pmf.begin(),
-                secondary_edges_pmf.end(),
-                secondary_edges_cdf.begin(),
+                primary_edges_pmf.begin(),
+                primary_edges_pmf.end(),
+                primary_edges_cdf.begin(),
                 thrust::identity<Real>(), Real(0), thrust::plus<Real>());
         }
-        // Build a hierarchical data structure for edge sampling
-        edge_tree = std::unique_ptr<EdgeTree>(
-            new EdgeTree(scene.use_gpu,
-                         scene.camera,
-                         shapes_buffer,
-                         edges.view(0, edges.size())));
-    } else {
-        // Build a hierarchical data structure for edge sampling
-        edge_tree = std::unique_ptr<EdgeTree>(
-            new EdgeTree(scene.use_gpu,
-                         scene.camera,
-                         shapes_buffer,
-                         edges.view(0, edges.size())));
+    }
+
+    if (scene.use_secondary_edge_sampling) {
+        // Secondary edge sampler
+        if (!c_use_edge_tree) {
+            // Build a global distribution if we are not using edge tree
+            secondary_edges_pmf = Buffer<Real>(scene.use_gpu, edges.count);
+            secondary_edges_cdf = Buffer<Real>(scene.use_gpu, edges.count);
+            // For each edge we compute the length and store the length in 
+            // secondary_edges_pmf
+            parallel_for(secondary_edge_weighter{
+                scene.shapes.data,
+                edges.begin(),
+                secondary_edges_pmf.begin()
+            }, edges.size(), scene.use_gpu);
+            {
+                // Compute PMF & CDF
+                // First normalize secondary_edges_pmf.
+                auto total_length = DISPATCH(scene.use_gpu, thrust::reduce,
+                    secondary_edges_pmf.begin(),
+                    secondary_edges_pmf.end(),
+                    Real(0),
+                    thrust::plus<Real>());
+                DISPATCH(scene.use_gpu, thrust::transform,
+                    secondary_edges_pmf.begin(),
+                    secondary_edges_pmf.end(),
+                    thrust::make_constant_iterator(total_length),
+                    secondary_edges_pmf.begin(),
+                    thrust::divides<Real>());
+                // Next we compute a prefix sum
+                DISPATCH(scene.use_gpu, thrust::transform_exclusive_scan,
+                    secondary_edges_pmf.begin(),
+                    secondary_edges_pmf.end(),
+                    secondary_edges_cdf.begin(),
+                    thrust::identity<Real>(), Real(0), thrust::plus<Real>());
+            }
+            // Build a hierarchical data structure for edge sampling
+            edge_tree = std::unique_ptr<EdgeTree>(
+                new EdgeTree(scene.use_gpu,
+                             scene.camera,
+                             shapes_buffer,
+                             edges.view(0, edges.size())));
+        } else {
+            // Build a hierarchical data structure for edge sampling
+            edge_tree = std::unique_ptr<EdgeTree>(
+                new EdgeTree(scene.use_gpu,
+                             scene.camera,
+                             shapes_buffer,
+                             edges.view(0, edges.size())));
+        }
     }
 }
 
@@ -649,14 +774,15 @@ void compute_primary_edge_derivatives(const Scene &scene,
 DEVICE
 inline Matrix3x3 get_ltc_matrix(const SurfacePoint &surface_point,
                                 const Vector3 &wi,
-                                Real roughness) {
+                                Real roughness,
+                                const float *tabM) {
     auto cos_theta = dot(wi, surface_point.shading_frame.n);
     auto theta = acos(cos_theta);
     // search lookup table
     auto rid = clamp(int(roughness * (ltc::size - 1)), 0, ltc::size - 1);
     auto tid = clamp(int((theta / (M_PI / 2.f)) * (ltc::size - 1)), 0, ltc::size - 1);
     // TODO: linear interpolation?
-    return Matrix3x3(ltc::tabM[rid+tid*ltc::size]);
+    return Matrix3x3(&tabM[9 * (rid + tid * ltc::size)]);
 }
 
 struct BVHStackItemH {
@@ -965,8 +1091,7 @@ struct secondary_edge_sampler {
                              const Ray &nee_ray,
                              Real sample,
                              Real resample_sample,
-                             Real &sample_weight,
-                             bool debug = false) {
+                             Real &sample_weight) {
         constexpr auto buffer_size = 128;
         BVHStackItemH buffer[buffer_size];
         auto selected_edge = -1;
@@ -1074,6 +1199,9 @@ struct secondary_edge_sampler {
                 }
             }
         }
+        if (edge_weight <= 0 || wsum <= 0) {
+            return -1;
+        }
 
         auto pmf_h = edge_weight * num_h_samples / wsum;
         sample_weight = 1 / pmf_h;
@@ -1090,8 +1218,7 @@ struct secondary_edge_sampler {
                              Real resample_sample,
                              Real &sample_weight,
                              Vector3 &edge_pt,
-                             Vector3 &mwt,
-                             bool debug = false) {
+                             Vector3 &mwt) {
         constexpr auto buffer_size = 128;
         BVHStackItemL buffer[buffer_size];
         auto selected_edge = -1;
@@ -1196,6 +1323,9 @@ struct secondary_edge_sampler {
             isect_jac = 1 / distance_squared(isect_pt, nee_ray.org);
             pdf_nee = envmap_pdf(*scene.envmap, nee_ray.dir);
         }
+        if (pmf <= 0 || isect_jac <= 0 || pdf_nee <= 0) {
+            return -1;
+        }
         sample_weight = 1 / (2 * edge_bounds_expand * pmf * isect_jac * pdf_nee);
         // Project isect_pt to corresponding point on the edge
         auto v0_p = v0 - isect_pt;
@@ -1263,6 +1393,11 @@ struct secondary_edge_sampler {
         auto specular_pmf = specular_weight / weight_sum;
         auto m_pmf = 0.f;
         auto n = shading_point.shading_frame.n;
+        if (material.two_sided) {
+            if (dot(wi, n) < 0.f) {
+                n = -n;
+            }
+        }
         auto frame_x = normalize(wi - n * dot(wi, n));
         auto frame_y = cross(n, frame_x);
         if (dot(wi, n) > 1 - 1e-6f) {
@@ -1278,7 +1413,7 @@ struct secondary_edge_sampler {
             m = inverse(m_inv);
             m_pmf = diffuse_pmf;
         } else {
-            m_inv = inverse(get_ltc_matrix(shading_point, wi, roughness)) *
+            m_inv = inverse(get_ltc_matrix(shading_point, wi, roughness, tabM)) *
                     Matrix3x3(isotropic_frame);
             m = inverse(m_inv);
             m_pmf = specular_pmf;
@@ -1404,8 +1539,7 @@ struct secondary_edge_sampler {
                 // sample using a tree traversal
                 edge_id = sample_edge_h(edge_tree_roots,
                     shading_point, m, m_inv, nee_ray,
-                    edge_sel, edge_sample.resample_sel, edge_weight,
-                    pixel_id == (239 * 256 + 199));
+                    edge_sel, edge_sample.resample_sel, edge_weight);
                 if (edge_id == -1 || edge_weight <= 0) {
                     return;
                 }
@@ -1494,7 +1628,7 @@ struct secondary_edge_sampler {
             edge_id = sample_edge_l(edge_tree_roots,
                  shading_point, m, m_inv, nee_ray, nee_isect, nee_point,
                  edge_sample.resample_sel, edge_weight, sample_p,
-                 mwt, pixel_id == (239 * 256 + 199));
+                 mwt);
             if (edge_id == -1 || edge_weight <= 0) {
                 return;
             }
@@ -1599,6 +1733,7 @@ struct secondary_edge_sampler {
     const Real *min_roughness;
     const float *d_rendered_image;
     const ChannelInfo channel_info;
+    const float *tabM;
     SecondaryEdgeRecord *edge_records;
     Ray *rays;
     RayDifferential *bsdf_differentials;
@@ -1649,6 +1784,7 @@ void sample_secondary_edges(const Scene &scene,
         min_roughness.begin(),
         d_rendered_image,
         channel_info,
+        ltc::tabM,
         edge_records.begin(),
         rays.begin(),
         bsdf_differentials.begin(),
@@ -1910,4 +2046,3 @@ void accumulate_secondary_edge_derivatives(const Scene &scene,
         d_vertices.begin()
     }, active_pixels.size(), scene.use_gpu);
 }
-

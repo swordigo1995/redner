@@ -13,7 +13,6 @@
 #include "edge.h"
 #include <vector>
 #include <memory>
-#include <mutex>
 #include <embree3/rtcore.h>
 #ifdef COMPILE_WITH_CUDA
   #include <optix_prime/optix_primepp.h>
@@ -27,7 +26,9 @@ struct Scene {
           const std::vector<const AreaLight*> &area_lights,
           const std::shared_ptr<const EnvironmentMap> &envmap,
           bool use_gpu,
-          int gpu_index);
+          int gpu_index,
+          bool use_primary_edge_sampling,
+          bool use_secondary_edge_sampling);
     ~Scene();
 
     // Flatten arrays of scene content
@@ -40,6 +41,8 @@ struct Scene {
     // Is the scene stored in GPU or CPU
     bool use_gpu;
     int gpu_index;
+    bool use_primary_edge_sampling;
+    bool use_secondary_edge_sampling;
 
 #ifdef COMPILE_WITH_CUDA
     // Optix handles
@@ -60,11 +63,6 @@ struct Scene {
     Buffer<Real> light_areas;
     Buffer<Real*> area_cdfs;
     Buffer<Real> area_cdf_pool;
-
-    // For material derivatives
-    std::vector<std::mutex> material_mutexes;
-    // For envmap derivatives
-    std::mutex envmap_mutex;
 
     // For edge sampling
     EdgeSampler edge_sampler;

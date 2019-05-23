@@ -28,11 +28,13 @@ PYBIND11_MODULE(redner, m) {
                       ptr<float>,
                       ptr<float>,
                       ptr<float>,
+                      ptr<float>,
                       float,
                       bool>());
 
     py::class_<DCamera>(m, "DCamera")
         .def(py::init<ptr<float>,
+                      ptr<float>,
                       ptr<float>,
                       ptr<float>,
                       ptr<float>>());
@@ -44,7 +46,9 @@ PYBIND11_MODULE(redner, m) {
                       const std::vector<const AreaLight*> &,
                       const std::shared_ptr<const EnvironmentMap> &,
                       bool,
-                      int>());
+                      int,
+                      bool,
+                      bool>());
 
     py::class_<DScene, std::shared_ptr<DScene>>(m, "DScene")
         .def(py::init<const DCamera &,
@@ -137,11 +141,16 @@ PYBIND11_MODULE(redner, m) {
 
     m.def("compute_num_channels", compute_num_channels, "");
 
+    py::enum_<SamplerType>(m, "SamplerType")
+        .value("independent", SamplerType::independent)
+        .value("sobol", SamplerType::sobol);
+
     py::class_<RenderOptions>(m, "RenderOptions")
         .def(py::init<uint64_t,
                       int,
                       int,
-                      std::vector<Channels>>())
+                      std::vector<Channels>,
+                      SamplerType>())
         .def_readwrite("seed", &RenderOptions::seed)
         .def_readwrite("num_samples", &RenderOptions::num_samples);
 
@@ -161,6 +170,7 @@ PYBIND11_MODULE(redner, m) {
         .def_readwrite("normals", &MitsubaTriMesh::normals);
 
     m.def("load_serialized", &load_serialized, "");
+
     m.def("render", &render, "");
 
     /// Tests
