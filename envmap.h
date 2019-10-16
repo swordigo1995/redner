@@ -93,8 +93,7 @@ inline void d_envmap_eval(const EnvironmentMap &envmap,
                           const Vector3 &dir,
                           const RayDifferential &ray_diff,
                           const Vector3 &d_output,
-                          DTexture3 &d_envmap_val,
-                          Matrix4x4 &d_world_to_env,
+                          DEnvironmentMap &d_envmap,
                           Vector3 &d_dir,
                           RayDifferential &d_ray_diff) {
     auto n_local_dir = xfm_vector(envmap.world_to_env, dir);
@@ -124,7 +123,7 @@ inline void d_envmap_eval(const EnvironmentMap &envmap,
     auto d_du_dxy = Vector2{0, 0};
     auto d_dv_dxy = Vector2{0, 0};
     d_get_texture_value(envmap.values, uv, du_dxy, dv_dxy, d_output,
-        d_envmap_val, d_uv, d_du_dxy, d_dv_dxy);
+        d_envmap.values, d_uv, d_du_dxy, d_dv_dxy);
     // dv_dxy = Vector2{dv_dlocal_dir_y * local_dir_dx.y,
     //                  dv_dlocal_dir_y * local_dir_dy.y}
     auto d_dv_dlocal_dir_y = d_dv_dxy.x * local_dir_dx.y + d_dv_dxy.y * local_dir_dy.y;
@@ -154,6 +153,7 @@ inline void d_envmap_eval(const EnvironmentMap &envmap,
     d_local_dir.z -= d_du_dlocal_dir_x * local_dir.x * local_dir.z /
         (Real(2 * M_PI) * square(square(local_dir.x) + square(local_dir.z)));
     // local_dir_dx = xfm_vector(envmap.world_to_env, ray_diff.dir_dx)
+    auto d_world_to_env = Matrix4x4{};
     d_xfm_vector(envmap.world_to_env, ray_diff.dir_dx, d_local_dir_dx,
         d_world_to_env, d_ray_diff.dir_dx);
     // local_dir_dy = xfm_vector(envmap.world_to_env, ray_diff.dir_dy)
@@ -175,6 +175,7 @@ inline void d_envmap_eval(const EnvironmentMap &envmap,
     auto d_n_local_dir = d_normalize(n_local_dir, d_local_dir);
     // n_local_dir = xfm_vector(envmap.world_to_env, dir)
     d_xfm_vector(envmap.world_to_env, dir, d_n_local_dir, d_world_to_env, d_dir);
+    atomic_add(d_envmap.world_to_env, d_world_to_env);
 }
 
 DEVICE
@@ -276,9 +277,3 @@ inline Real envmap_pdf(const EnvironmentMap &envmap, const Vector3 &dir) {
     auto sin_theta_cy = fabs(sin(Real(M_PI) * (yci + 0.5f) / h));
     return envmap.pdf_norm * fabs(lum_fy * sin_theta_fy + lum_cy * sin_theta_cy) / sin_theta;
 }
-
-void accumulate_envmap(const Scene &scene,
-                       const BufferView<DTexture3> &d_envmap_vals,
-                       const Matrix4x4 &d_world_to_env,
-                       DEnvironmentMap &d_envmap);
-

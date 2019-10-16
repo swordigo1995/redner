@@ -90,26 +90,6 @@ struct PathBuffer {
         d_ray_differentials = Buffer<RayDifferential>(use_gpu, num_pixels);
         d_points = Buffer<SurfacePoint>(use_gpu, num_pixels);
 
-        d_general_vertices = Buffer<DVertex>(use_gpu, 3 * num_pixels);
-        d_light_vertices = Buffer<DVertex>(use_gpu, 3 * num_pixels);
-        d_bsdf_vertices = Buffer<DVertex>(use_gpu, 3 * num_pixels);
-        d_diffuse_texs = Buffer<DTexture3>(use_gpu, num_pixels);
-        d_specular_texs = Buffer<DTexture3>(use_gpu, num_pixels);
-        d_roughness_texs = Buffer<DTexture1>(use_gpu, num_pixels);
-        d_direct_lights = Buffer<DAreaLightInst>(use_gpu, num_pixels);
-        d_nee_lights = Buffer<DAreaLightInst>(use_gpu, num_pixels);
-        d_bsdf_lights = Buffer<DAreaLightInst>(use_gpu, num_pixels);
-        d_envmap_vals = Buffer<DTexture3>(use_gpu, num_pixels);
-        d_world_to_envs = Buffer<Matrix4x4>(use_gpu, num_pixels);
-
-        d_vertex_reduce_buffer = Buffer<DVertex>(use_gpu, 3 * num_pixels);
-        d_tex3_reduce_buffer = Buffer<DTexture3>(use_gpu, num_pixels);
-        d_tex1_reduce_buffer = Buffer<DTexture1>(use_gpu, num_pixels);
-        d_lgt_reduce_buffer = Buffer<DAreaLightInst>(use_gpu, num_pixels);
-        d_envmap_reduce_buffer = Buffer<DTexture3>(use_gpu, num_pixels);
-
-        d_cameras = Buffer<DCameraInst>(use_gpu, num_pixels);
-
         primary_edge_samples = Buffer<PrimaryEdgeSample>(use_gpu, num_pixels);
         secondary_edge_samples = Buffer<SecondaryEdgeSample>(use_gpu, num_pixels);
         primary_edge_records = Buffer<PrimaryEdgeRecord>(use_gpu, num_pixels);
@@ -153,25 +133,6 @@ struct PathBuffer {
     Buffer<RayDifferential> d_ray_differentials;
     Buffer<SurfacePoint> d_points;
 
-    Buffer<DVertex> d_general_vertices;
-    Buffer<DVertex> d_light_vertices;
-    Buffer<DVertex> d_bsdf_vertices;
-    Buffer<DTexture3> d_diffuse_texs;
-    Buffer<DTexture3> d_specular_texs;
-    Buffer<DTexture1> d_roughness_texs;
-    Buffer<DAreaLightInst> d_direct_lights;
-    Buffer<DAreaLightInst> d_nee_lights;
-    Buffer<DAreaLightInst> d_bsdf_lights;
-    Buffer<DTexture3> d_envmap_vals;
-    Buffer<Matrix4x4> d_world_to_envs;
-    Buffer<DVertex> d_vertex_reduce_buffer;
-    Buffer<DTexture3> d_tex3_reduce_buffer;
-    Buffer<DTexture1> d_tex1_reduce_buffer;
-    Buffer<DAreaLightInst> d_lgt_reduce_buffer;
-    Buffer<DTexture3> d_envmap_reduce_buffer;
-
-    Buffer<DCameraInst> d_cameras;
-
     // Edge sampling related
     Buffer<PrimaryEdgeSample> primary_edge_samples;
     Buffer<SecondaryEdgeSample> secondary_edge_samples;
@@ -183,167 +144,6 @@ struct PathBuffer {
     Buffer<LightSample> tmp_light_samples;
     Buffer<BSDFSample> tmp_bsdf_samples;
 };
-
-void accumulate_vertex(BufferView<DVertex> d_vertices,
-                       BufferView<DVertex> reduce_buffer,
-                       BufferView<DShape> d_shapes,
-                       bool use_gpu,
-                       ThrustCachedAllocator &thrust_alloc) {
-    if (d_vertices.size() == 0) {
-        return;
-    }
-    // Reduce into unique sequence
-    auto beg = d_vertices.begin();
-    auto end = d_vertices.end();
-    auto buffer_beg = reduce_buffer.begin();
-    auto buffer_end = DISPATCH_CACHED(use_gpu, thrust_alloc,
-        thrust::remove_copy, beg, end, buffer_beg, DVertex{-1, -1});
-    DISPATCH_CACHED(use_gpu, thrust_alloc, thrust::sort, buffer_beg, buffer_end);
-    auto new_end = DISPATCH_CACHED(use_gpu, thrust_alloc, thrust::reduce_by_key,
-        buffer_beg, buffer_end, // input keys
-        buffer_beg, // input values
-        beg, // output keys
-        beg).first; // output values
-    d_vertices.count = new_end - beg;
-    // Accumulate to output derivatives
-    accumulate_vertex(d_vertices, d_shapes, use_gpu);
-}
-
-void accumulate_diffuse(const Scene &scene,
-                        BufferView<DTexture3> d_diffuse,
-                        BufferView<DTexture3> reduce_buffer,
-                        BufferView<DMaterial> d_materials,
-                        ThrustCachedAllocator &thrust_alloc) {
-    if (d_diffuse.size() == 0) {
-        return;
-    }
-    // Reduce into unique sequence
-    auto beg = d_diffuse.begin();
-    auto end = d_diffuse.end();
-    auto buffer_beg = reduce_buffer.begin();
-    auto buffer_end = DISPATCH_CACHED(scene.use_gpu, thrust_alloc,
-        thrust::remove_copy, beg, end, buffer_beg, DTexture3{-1, -1, -1, -1});
-    DISPATCH_CACHED(scene.use_gpu, thrust_alloc, thrust::sort, buffer_beg, buffer_end);
-    auto new_end = DISPATCH_CACHED(scene.use_gpu, thrust_alloc, thrust::reduce_by_key,
-        buffer_beg, buffer_end, // input keys
-        buffer_beg, // input values
-        beg, // output keys
-        beg).first; // output values
-    d_diffuse.count = new_end - beg;
-    // Accumulate to output derivatives
-    accumulate_diffuse(scene, d_diffuse, d_materials);
-}
-
-void accumulate_specular(const Scene &scene,
-                         BufferView<DTexture3> d_specular,
-                         BufferView<DTexture3> reduce_buffer,
-                         BufferView<DMaterial> d_materials,
-                         ThrustCachedAllocator &thrust_alloc) {
-    if (d_specular.size() == 0) {
-        return;
-    }
-    // Reduce into unique sequence
-    auto beg = d_specular.begin();
-    auto end = d_specular.end();
-    auto buffer_beg = reduce_buffer.begin();
-    auto buffer_end = DISPATCH_CACHED(scene.use_gpu, thrust_alloc,
-        thrust::remove_copy, beg, end, buffer_beg, DTexture3{-1, -1, -1, -1});
-    DISPATCH_CACHED(scene.use_gpu, thrust_alloc, thrust::sort, buffer_beg, buffer_end);
-    auto new_end = DISPATCH_CACHED(scene.use_gpu, thrust_alloc, thrust::reduce_by_key,
-        buffer_beg, buffer_end, // input keys
-        buffer_beg, // input values
-        beg, // output keys
-        beg).first; // output values
-    d_specular.count = new_end - beg;
-    // Accumulate to output derivatives
-    accumulate_specular(scene, d_specular, d_materials);
-}
-
-void accumulate_roughness(const Scene &scene,
-                          BufferView<DTexture1> d_roughness,
-                          BufferView<DTexture1> reduce_buffer,
-                          BufferView<DMaterial> d_materials,
-                          ThrustCachedAllocator &thrust_alloc) {
-    if (d_roughness.size() == 0) {
-        return;
-    }
-    // Reduce into unique sequence
-    auto beg = d_roughness.begin();
-    auto end = d_roughness.end();
-    auto buffer_beg = reduce_buffer.begin();
-    auto buffer_end = DISPATCH_CACHED(scene.use_gpu, thrust_alloc,
-        thrust::remove_copy, beg, end, buffer_beg, DTexture1{-1, -1, -1, -1});
-    DISPATCH_CACHED(scene.use_gpu, thrust_alloc, thrust::sort, buffer_beg, buffer_end);
-    auto new_end = DISPATCH_CACHED(scene.use_gpu, thrust_alloc, thrust::reduce_by_key,
-        buffer_beg, buffer_end, // input keys
-        buffer_beg, // input values
-        beg, // output keys
-        beg).first; // output values
-    d_roughness.count = new_end - beg;
-    // Accumulate to output derivatives
-    accumulate_roughness(scene, d_roughness, d_materials);
-}
-
-void accumulate_area_light(BufferView<DAreaLightInst> &d_light_insts,
-                           BufferView<DAreaLightInst> reduce_buffer,
-                           BufferView<DAreaLight> d_lights,
-                           bool use_gpu,
-                           ThrustCachedAllocator &thrust_alloc) {
-    if (d_light_insts.size() == 0) {
-        return;
-    }
-    // Reduce into unique sequence
-    auto beg = d_light_insts.begin();
-    auto end = d_light_insts.end();
-    auto buffer_beg = reduce_buffer.begin();
-    auto buffer_end = DISPATCH_CACHED(use_gpu, thrust_alloc,
-        thrust::remove_copy, beg, end, buffer_beg, DAreaLightInst{-1});
-    DISPATCH_CACHED(use_gpu, thrust_alloc, thrust::sort, buffer_beg, buffer_end);
-    auto new_end = DISPATCH_CACHED(use_gpu, thrust_alloc, thrust::reduce_by_key,
-        buffer_beg, buffer_end, // input keys
-        buffer_beg, // input values
-        beg, // output keys
-        beg).first; // output values
-    d_light_insts.count = new_end - beg;
-    // Accumulate to output derivatives
-    accumulate_area_light(d_light_insts, d_lights, use_gpu);
-}
-
-void accumulate_envmap(const Scene &scene,
-                       BufferView<DTexture3> &d_envmap_vals,
-                       BufferView<Matrix4x4> &d_world_to_envs,
-                       BufferView<DTexture3> reduce_buffer,
-                       DEnvironmentMap *d_envmap,
-                       ThrustCachedAllocator &thrust_alloc) {
-    if (d_envmap_vals.size() == 0) {
-        return;
-    }
-    {
-        // Reduce into unique sequence
-        auto beg = d_envmap_vals.begin();
-        auto end = d_envmap_vals.end();
-        auto buffer_beg = reduce_buffer.begin();
-        auto buffer_end = DISPATCH_CACHED(scene.use_gpu, thrust_alloc,
-            thrust::remove_copy, beg, end, buffer_beg, DTexture3{-1});
-        DISPATCH_CACHED(scene.use_gpu, thrust_alloc, thrust::sort, buffer_beg, buffer_end);
-        auto new_end = DISPATCH_CACHED(scene.use_gpu, thrust_alloc, thrust::reduce_by_key,
-            buffer_beg, buffer_end, // input keys
-            buffer_beg, // input values
-            beg, // output keys
-            beg).first; // output values
-        d_envmap_vals.count = new_end - beg;
-    }
-    auto d_world_to_env = Matrix4x4();
-    {
-        // Reduce to a single matrix
-        auto beg = d_world_to_envs.begin();
-        auto end = d_world_to_envs.begin();
-        d_world_to_env = DISPATCH_CACHED(scene.use_gpu, thrust_alloc,
-            thrust::reduce, beg, end, Matrix4x4());
-    }
-    // Accumulate to output derivatives
-    accumulate_envmap(scene, d_envmap_vals, d_world_to_env, *d_envmap);
-}
 
 // 1 2 3 4 5 -> 1 1 2 2 3 3 4 4 5 5
 template <typename T>
@@ -420,7 +220,7 @@ void render(const Scene &scene,
     auto optix_rays = path_buffer.optix_rays.view(0, 2 * num_pixels);
     auto optix_hits = path_buffer.optix_hits.view(0, 2 * num_pixels);
 
-    ThrustCachedAllocator thrust_alloc(scene.use_gpu, num_pixels * sizeof(DTexture3));
+    ThrustCachedAllocator thrust_alloc(scene.use_gpu, num_pixels * sizeof(int));
 
     // For each sample
     for (int sample_id = 0; sample_id < options.num_samples; sample_id++) {
@@ -472,8 +272,7 @@ void render(const Scene &scene,
         update_active_pixels(primary_active_pixels, shading_isects, active_pixels, scene.use_gpu);
         std::fill(num_active_pixels.begin(), num_active_pixels.end(), 0);
         num_active_pixels[0] = active_pixels.size();
-        for (int depth = 0; depth < max_bounces &&
-                num_active_pixels[depth] > 0; depth++) {
+        for (int depth = 0; depth < max_bounces && num_active_pixels[depth] > 0; depth++) {
             // Buffer views for this path vertex
             const auto active_pixels =
                 path_buffer.active_pixels.view(depth * num_pixels, num_active_pixels[depth]);
@@ -622,16 +421,6 @@ void render(const Scene &scene,
                 auto d_ray_differentials = path_buffer.d_ray_differentials.view(0, num_pixels);
                 auto d_points = path_buffer.d_points.view(0, num_pixels);
 
-                auto d_light_vertices = path_buffer.d_light_vertices.view(0, 3 * num_actives);
-                auto d_bsdf_vertices = path_buffer.d_bsdf_vertices.view(0, 3 * num_actives);
-                auto d_diffuse_texs = path_buffer.d_diffuse_texs.view(0, num_actives);
-                auto d_specular_texs = path_buffer.d_specular_texs.view(0, num_actives);
-                auto d_roughness_texs = path_buffer.d_roughness_texs.view(0, num_actives);
-                auto d_nee_lights = path_buffer.d_nee_lights.view(0, num_actives);
-                auto d_bsdf_lights = path_buffer.d_bsdf_lights.view(0, num_actives);
-                auto d_envmap_vals = path_buffer.d_envmap_vals.view(0, num_actives);
-                auto d_world_to_envs = path_buffer.d_world_to_envs.view(0, num_actives);
-
                 if (first) {
                     first = false;
                     // Initialize the derivatives propagated from the next vertex
@@ -668,15 +457,7 @@ void render(const Scene &scene,
                     d_next_rays,
                     d_next_ray_differentials,
                     d_next_points,
-                    d_light_vertices,
-                    d_bsdf_vertices,
-                    d_diffuse_texs,
-                    d_specular_texs,
-                    d_roughness_texs,
-                    d_nee_lights,
-                    d_bsdf_lights,
-                    d_envmap_vals,
-                    d_world_to_envs,
+                    d_scene.get(),
                     d_throughputs,
                     d_rays,
                     d_ray_differentials,
@@ -879,7 +660,6 @@ void render(const Scene &scene,
                     // Now the path traced contribution for the edges is stored in edge_contribs
                     // We'll compute the derivatives w.r.t. three points: two on edges and one on
                     // the shading point
-                    auto d_edge_vertices = path_buffer.d_general_vertices.view(0, num_edge_samples);
                     accumulate_secondary_edge_derivatives(scene,
                                                           active_pixels,
                                                           shading_points,
@@ -887,129 +667,8 @@ void render(const Scene &scene,
                                                           edge_surface_points,
                                                           edge_contribs,
                                                           d_points,
-                                                          d_edge_vertices);
-                    // Deposit vertices, texture, light derivatives
-                    // sort the derivatives by id & reduce by key
-                    accumulate_vertex(
-                        d_edge_vertices,
-                        path_buffer.d_vertex_reduce_buffer.view(0, 2 * num_actives),
-                        d_scene->shapes.view(0, d_scene->shapes.size()),
-                        scene.use_gpu,
-                        thrust_alloc);
+                                                          d_scene->shapes.view(0, d_scene->shapes.size()));
                     ////////////////////////////////////////////////////////////////////////////////
-                }
-                /*cuda_synchronize();
-                for (int i = 0; i < num_actives; i++) {
-                    auto pixel_id = active_pixels[i];
-                    // auto d_p = d_points[pixel_id].position;
-                    // debug_image[3 * pixel_id + 0] += d_p[0];
-                    // debug_image[3 * pixel_id + 1] += d_p[0];
-                    // debug_image[3 * pixel_id + 2] += d_p[0];
-                    auto c = 1;
-                    auto d_e_v0 = d_edge_vertices[2 * i + 0];
-                    auto d_e_v1 = d_edge_vertices[2 * i + 1];
-                    if (d_e_v0.shape_id == 1) {
-                        auto d_v0 = d_e_v0.d_v;
-                        auto d_v1 = d_e_v1.d_v;
-                        debug_image[3 * pixel_id + 0] += d_v0[c] + d_v1[c];
-                        debug_image[3 * pixel_id + 1] += d_v0[c] + d_v1[c];
-                        debug_image[3 * pixel_id + 2] += d_v0[c] + d_v1[c];
-                    }
-                    auto d_l_v0 = d_light_vertices[3 * i + 0];
-                    auto d_l_v1 = d_light_vertices[3 * i + 1];
-                    auto d_l_v2 = d_light_vertices[3 * i + 2];
-                    if (d_l_v0.shape_id == 6) {
-                        auto d_v0 = d_l_v0.d_v;
-                        auto d_v1 = d_l_v1.d_v;
-                        auto d_v2 = d_l_v2.d_v;
-                        debug_image[3 * pixel_id + 0] += d_v0[c] + d_v1[c] + d_v2[c];
-                        debug_image[3 * pixel_id + 1] += d_v0[c] + d_v1[c] + d_v2[c];
-                        debug_image[3 * pixel_id + 2] += d_v0[c] + d_v1[c] + d_v2[c];
-                    }
-                    auto d_b_v0 = d_bsdf_vertices[3 * i + 0];
-                    auto d_b_v1 = d_bsdf_vertices[3 * i + 1];
-                    auto d_b_v2 = d_bsdf_vertices[3 * i + 2];
-                    if (d_b_v0.shape_id == 6) {
-                        auto d_v0 = d_b_v0.d_v;
-                        auto d_v1 = d_b_v1.d_v;
-                        auto d_v2 = d_b_v2.d_v;
-                        debug_image[3 * pixel_id + 0] += d_v0[c] + d_v1[c] + d_v2[c];
-                        debug_image[3 * pixel_id + 1] += d_v0[c] + d_v1[c] + d_v2[c];
-                        debug_image[3 * pixel_id + 2] += d_v0[c] + d_v1[c] + d_v2[c];
-                    }
-                }*/
-
-                // Deposit vertices, texture, light derivatives
-                // sort the derivatives by id & reduce by key
-                accumulate_vertex(
-                    d_light_vertices, 
-                    path_buffer.d_vertex_reduce_buffer.view(0, 3 * num_actives),
-                    d_scene->shapes.view(0, d_scene->shapes.size()),
-                    scene.use_gpu,
-                    thrust_alloc);
-                accumulate_vertex(
-                    d_bsdf_vertices, 
-                    path_buffer.d_vertex_reduce_buffer.view(0, 3 * num_actives),
-                    d_scene->shapes.view(0, d_scene->shapes.size()),
-                    scene.use_gpu,
-                    thrust_alloc);
-
-                // for (int i = 0; i < active_pixels.size(); i++) {
-                //     auto pixel_id = active_pixels[i];
-                //     auto d_diffuse_tex = d_diffuse_texs[i];
-                //     if (d_diffuse_tex.material_id == 4) {
-                //         debug_image[3 * pixel_id + 0] += d_diffuse_tex.t00[0];
-                //         debug_image[3 * pixel_id + 1] += d_diffuse_tex.t00[1];
-                //         debug_image[3 * pixel_id + 2] += d_diffuse_tex.t00[2];
-                //     }
-                // }
-                accumulate_diffuse(
-                    scene,
-                    d_diffuse_texs,
-                    path_buffer.d_tex3_reduce_buffer.view(0, num_actives),
-                    d_scene->materials.view(0, d_scene->materials.size()),
-                    thrust_alloc);
-                accumulate_specular(
-                    scene,
-                    d_specular_texs,
-                    path_buffer.d_tex3_reduce_buffer.view(0, num_actives),
-                    d_scene->materials.view(0, d_scene->materials.size()),
-                    thrust_alloc);
-                // for (int i = 0; i < active_pixels.size(); i++) {
-                //     auto pixel_id = active_pixels[i];
-                //     auto d_roughness_tex = d_roughness_texs[i];
-                //     if (d_roughness_tex.material_id == 4) {
-                //         debug_image[3 * pixel_id + 0] += d_roughness_tex.t000;
-                //         debug_image[3 * pixel_id + 1] += d_roughness_tex.t000;
-                //         debug_image[3 * pixel_id + 2] += d_roughness_tex.t000;
-                //     }
-                // }
-                accumulate_roughness(
-                    scene,
-                    d_roughness_texs,
-                    path_buffer.d_tex1_reduce_buffer.view(0, num_actives),
-                    d_scene->materials.view(0, d_scene->materials.size()),
-                    thrust_alloc);
-                accumulate_area_light(
-                    d_nee_lights,
-                    path_buffer.d_lgt_reduce_buffer.view(0, num_actives),
-                    d_scene->area_lights.view(0, d_scene->area_lights.size()),
-                    scene.use_gpu,
-                    thrust_alloc);
-                accumulate_area_light(
-                    d_bsdf_lights,
-                    path_buffer.d_lgt_reduce_buffer.view(0, num_actives),
-                    d_scene->area_lights.view(0, d_scene->area_lights.size()),
-                    scene.use_gpu,
-                    thrust_alloc);
-                if (scene.envmap != nullptr) {
-                    accumulate_envmap(
-                        scene,
-                        d_envmap_vals,
-                        d_world_to_envs,
-                        path_buffer.d_envmap_reduce_buffer.view(0, num_actives),
-                        d_scene->envmap,
-                        thrust_alloc);
                 }
 
                 // Previous become next
@@ -1036,15 +695,6 @@ void render(const Scene &scene,
                 const auto d_ray_differentials =
                     path_buffer.d_next_ray_differentials.view(0, num_pixels);
                 auto d_points = path_buffer.d_next_points.view(0, num_pixels);
-                auto d_direct_lights = path_buffer.d_direct_lights.view(0, num_actives_primary);
-                auto d_envmap_vals = path_buffer.d_envmap_vals.view(0, num_actives_primary);
-                auto d_world_to_envs = path_buffer.d_world_to_envs.view(0, num_actives_primary);
-                auto d_diffuse_texs = path_buffer.d_diffuse_texs.view(0, num_actives_primary);
-                auto d_specular_texs = path_buffer.d_specular_texs.view(0, num_actives_primary);
-                auto d_roughness_texs = path_buffer.d_roughness_texs.view(0, num_actives_primary);
-                auto d_primary_vertices =
-                    path_buffer.d_general_vertices.view(0, 3 * num_actives_primary);
-                auto d_cameras = path_buffer.d_cameras.view(0, num_actives_primary);
 
                 d_accumulate_primary_contribs(scene,
                                               primary_active_pixels,
@@ -1057,15 +707,10 @@ void render(const Scene &scene,
                                               Real(1) / options.num_samples,
                                               channel_info,
                                               d_rendered_image.get(),
-                                              d_direct_lights,
-                                              d_envmap_vals,
-                                              d_world_to_envs,
+                                              d_scene.get(),
                                               d_rays,
                                               d_ray_differentials,
-                                              d_points,
-                                              d_diffuse_texs,
-                                              d_specular_texs,
-                                              d_roughness_texs);
+                                              d_points);
                 // Propagate to camera
                 d_primary_intersection(scene,
                                        primary_active_pixels,
@@ -1076,76 +721,7 @@ void render(const Scene &scene,
                                        d_rays,
                                        d_ray_differentials,
                                        d_points,
-                                       d_primary_vertices,
-                                       d_cameras);
-
-                /*cuda_synchronize();
-                for (int i = 0; i < primary_active_pixels.size(); i++) {
-                    auto c = 1;
-                    auto pixel_id = primary_active_pixels[i];
-                    auto d_v0 = d_primary_vertices[3 * i + 0];
-                    auto d_v1 = d_primary_vertices[3 * i + 1];
-                    auto d_v2 = d_primary_vertices[3 * i + 2];
-                    if (d_v0.shape_id == 6) {
-                        debug_image[3 * pixel_id + 0] += (d_v0.d_v[c] + d_v1.d_v[c] + d_v2.d_v[c]);
-                        debug_image[3 * pixel_id + 1] += (d_v0.d_v[c] + d_v1.d_v[c] + d_v2.d_v[c]);
-                        debug_image[3 * pixel_id + 2] += (d_v0.d_v[c] + d_v1.d_v[c] + d_v2.d_v[c]);
-                    }
-                }*/
-
-                // for (int i = 0; i < primary_active_pixels.size(); i++) {
-                //     auto pixel_id = primary_active_pixels[i];
-                //     auto d_pos = d_cameras[i].position;
-                //     debug_image[3 * pixel_id + 0] += d_pos[0];
-                //     debug_image[3 * pixel_id + 1] += d_pos[0];
-                //     debug_image[3 * pixel_id + 2] += d_pos[0];
-                // }
-
-                // Deposit derivatives
-                accumulate_area_light(
-                    d_direct_lights,
-                    path_buffer.d_lgt_reduce_buffer.view(0, num_actives_primary),
-                    d_scene->area_lights.view(0, d_scene->area_lights.size()),
-                    scene.use_gpu,
-                    thrust_alloc);
-                if (scene.envmap != nullptr) {
-                    accumulate_envmap(
-                        scene,
-                        d_envmap_vals,
-                        d_world_to_envs,
-                        path_buffer.d_envmap_reduce_buffer.view(0, num_actives_primary),
-                        d_scene->envmap,
-                        thrust_alloc);
-                }
-                accumulate_vertex(
-                    d_primary_vertices,
-                    path_buffer.d_vertex_reduce_buffer.view(0, num_actives_primary),
-                    d_scene->shapes.view(0, d_scene->shapes.size()),
-                    scene.use_gpu,
-                    thrust_alloc);
-                accumulate_diffuse(
-                    scene,
-                    d_diffuse_texs,
-                    path_buffer.d_tex3_reduce_buffer.view(0, num_actives_primary),
-                    d_scene->materials.view(0, d_scene->materials.size()),
-                    thrust_alloc);
-                accumulate_specular(
-                    scene,
-                    d_specular_texs,
-                    path_buffer.d_tex3_reduce_buffer.view(0, num_actives_primary),
-                    d_scene->materials.view(0, d_scene->materials.size()),
-                    thrust_alloc);
-                accumulate_roughness(
-                    scene,
-                    d_roughness_texs,
-                    path_buffer.d_tex1_reduce_buffer.view(0, num_actives_primary),
-                    d_scene->materials.view(0, d_scene->materials.size()),
-                    thrust_alloc);
-
-                // Reduce the camera array
-                DCameraInst d_camera = DISPATCH_CACHED(scene.use_gpu, thrust_alloc, thrust::reduce,
-                    d_cameras.begin(), d_cameras.end(), DCameraInst{});
-                accumulate_camera(camera, d_camera, d_scene->camera, scene.use_gpu);
+                                       d_scene.get());
             }
 
             /////////////////////////////////////////////////////////////////////////////////
@@ -1320,48 +896,9 @@ void render(const Scene &scene,
                 }
 
                 // Convert edge contributions to vertex derivatives
-                auto d_vertices = path_buffer.d_general_vertices.view(0, 2 * num_pixels);
-                auto d_cameras = path_buffer.d_cameras.view(0, num_pixels);
                 compute_primary_edge_derivatives(
-                    scene, edge_records, edge_contribs, d_vertices, d_cameras);
-
-                // for (int i = 0; i < edge_records.size(); i++) {
-                //     auto rec = edge_records[i];
-                //     if (rec.edge.shape_id >= 0) {
-                //         auto edge_pt = rec.edge_pt;
-                //         auto xi = int(edge_pt[0] * camera.width);
-                //         auto yi = int(edge_pt[1] * camera.height);
-                //         auto d_v0 = d_vertices[2 * i + 0].d_v;
-                //         auto d_v1 = d_vertices[2 * i + 1].d_v;
-                //         debug_image[3 * (yi * camera.width + xi) + 0] += d_v0[0] + d_v1[0];
-                //         debug_image[3 * (yi * camera.width + xi) + 1] += d_v0[0] + d_v1[0];
-                //         debug_image[3 * (yi * camera.width + xi) + 2] += d_v0[0] + d_v1[0];
-                //     }
-                // }
-
-                // Deposit vertices
-                accumulate_vertex(
-                    d_vertices,
-                    path_buffer.d_vertex_reduce_buffer.view(0, d_vertices.size()),
-                    d_scene->shapes.view(0, d_scene->shapes.size()),
-                    scene.use_gpu,
-                    thrust_alloc);
-
-                // Reduce the camera array
-                DCameraInst d_camera = DISPATCH_CACHED(scene.use_gpu, thrust_alloc, thrust::reduce,
-                    d_cameras.begin(), d_cameras.end(), DCameraInst{});
-                accumulate_camera(camera, d_camera, d_scene->camera, scene.use_gpu);
-
-                // for (int i = 0; i < edge_records.size(); i++) {
-                //     auto rec = edge_records[i];
-                //     auto edge_pt = rec.edge_pt;
-                //     auto xi = int(edge_pt[0] * camera.width);
-                //     auto yi = int(edge_pt[1] * camera.height);
-                //     auto d_pos = d_cameras[i].position;
-                //     debug_image[3 * (yi * camera.width + xi) + 0] += d_pos[0];
-                //     debug_image[3 * (yi * camera.width + xi) + 1] += d_pos[0];
-                //     debug_image[3 * (yi * camera.width + xi) + 2] += d_pos[0];
-                // }
+                    scene, edge_records, edge_contribs,
+                    d_scene->shapes.view(0, d_scene->shapes.size()), d_scene->camera);
             }
             /////////////////////////////////////////////////////////////////////////////////
         }

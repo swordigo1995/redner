@@ -75,11 +75,17 @@ Scene::Scene(const Camera &camera,
 #endif
     if (use_gpu) {
 #ifdef __NVCC__
+        // Initialize the scene in another thread, since optix prime calls cudaSetDeviceFlags
+        // and becomes unhappy if we create a context in the main thread
         checkCuda(cudaGetDevice(&old_device_id));
         if (gpu_index != -1) {
             checkCuda(cudaSetDevice(gpu_index));
         }
         // Initialize Optix prime scene
+        // FIXME: optix context creation calls cudaDeviceSetFlags(), but we already
+        // activate CUDA before this. Ideally we want to move context creation to an initialization
+        // phase, but we also want to have a context for each GPU.
+        // We should create a context array in global memory and fetch the corresponding context.
         optix_context = optix::prime::Context::create(RTP_CONTEXT_TYPE_CUDA);
         if (gpu_index != -1) {
             optix_context->setCudaDeviceNumbers({(uint32_t)gpu_index});
@@ -758,9 +764,13 @@ void test_scene_intersect(bool use_gpu) {
     ray_diffs[1] = ray_diff1;
     Shape triangle{(float*)vertices.data,
                    (int*)indices.data,
-                   nullptr,
-                   nullptr,
+                   nullptr, // uvs
+                   nullptr, // normal
+                   nullptr, // uv_indices
+                   nullptr, // normal_indices
                    3, // num_vertices
+                   0, // num_uv_vertices
+                   0, // num_normal_vertices
                    1, // num_triangles
                    0,
                    -1};
@@ -773,6 +783,8 @@ void test_scene_intersect(bool use_gpu) {
         &pos[0],
         &look[0],
         &up[0],
+        nullptr, // cam_to_world
+        nullptr, // world_to_cam
         &n2c.data[0][0],
         &c2n.data[0][0],
         1e-2f,
@@ -838,17 +850,25 @@ void test_sample_point_on_light(bool use_gpu) {
     samples[2] = LightSample{0.5f, 0.5f, Vector2{0.f, 0.f}};
     Shape shape0{(float*)vertices0.data,
                  (int*)indices0.data,
-                 nullptr,
-                 nullptr,
+                 nullptr, // uvs
+                 nullptr, // normals
+                 nullptr, // uv_indices
+                 nullptr, // normal_indices
                  6, // num_vertices
+                 0, // num_uv_vertices
+                 0, // num_normal_vertices
                  2, // num_triangles
                  0,
                  0};
     Shape shape1{(float*)vertices1.data,
                  (int*)indices1.data,
-                 nullptr,
-                 nullptr,
+                 nullptr, // uvs
+                 nullptr, // normals
+                 nullptr, // uv_indices
+                 nullptr, // normal_indices
                  3, // num_vertices
+                 0, // num_uv_vertices
+                 0, // num_normal_vertices
                  1, // num_triangles
                  0,
                  0};
@@ -870,6 +890,8 @@ void test_sample_point_on_light(bool use_gpu) {
         &pos[0],
         &look[0],
         &up[0],
+        nullptr, // cam_to_world
+        nullptr, // world_to_cam
         &n2c.data[0][0],
         &c2n.data[0][0],
         1e-2f,

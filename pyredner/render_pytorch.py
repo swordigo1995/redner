@@ -1,5 +1,4 @@
 import torch
-from torch.autograd import Variable
 import numpy as np
 import redner
 import pyredner
@@ -16,7 +15,7 @@ import skimage.io
 use_correlated_random_number = False
 def set_use_correlated_random_number(v):
     global use_correlated_random_number
-    use_gpu = v
+    use_correlated_random_number = v
 
 def get_use_correlated_random_number():
     global use_correlated_random_number
@@ -81,34 +80,68 @@ class RenderFunction(torch.autograd.Function):
         args.append(num_shapes)
         args.append(num_materials)
         args.append(num_lights)
+        assert(cam.position is None or torch.isfinite(cam.position).all())
+        assert(cam.look_at is None or torch.isfinite(cam.look_at).all())
+        assert(cam.up is None or torch.isfinite(cam.up).all())
+        assert(torch.isfinite(cam.ndc_to_cam).all())
+        assert(torch.isfinite(cam.cam_to_ndc).all())
         args.append(cam.position)
         args.append(cam.look_at)
         args.append(cam.up)
+        args.append(cam.cam_to_world)
+        args.append(cam.world_to_cam)
         args.append(cam.ndc_to_cam)
         args.append(cam.cam_to_ndc)
         args.append(cam.clip_near)
         args.append(cam.resolution)
         args.append(cam.camera_type)
         for shape in scene.shapes:
+            assert(torch.isfinite(shape.vertices).all())
+            if (shape.uvs is not None):
+                assert(torch.isfinite(shape.uvs).all())
+            if (shape.normals is not None):
+                assert(torch.isfinite(shape.normals).all())
             args.append(shape.vertices)
             args.append(shape.indices)
             args.append(shape.uvs)
             args.append(shape.normals)
+            args.append(shape.uv_indices)
+            args.append(shape.normal_indices)
             args.append(shape.material_id)
             args.append(shape.light_id)
         for material in scene.materials:
+            assert(torch.isfinite(material.diffuse_reflectance.mipmap).all())
+            assert(torch.isfinite(material.diffuse_reflectance.uv_scale).all())
+            assert(torch.isfinite(material.specular_reflectance.mipmap).all())
+            assert(torch.isfinite(material.specular_reflectance.uv_scale).all())
+            assert(torch.isfinite(material.roughness.mipmap).all())
+            assert(torch.isfinite(material.roughness.uv_scale).all())
             args.append(material.diffuse_reflectance.mipmap)
             args.append(material.diffuse_reflectance.uv_scale)
             args.append(material.specular_reflectance.mipmap)
             args.append(material.specular_reflectance.uv_scale)
             args.append(material.roughness.mipmap)
             args.append(material.roughness.uv_scale)
+            if material.normal_map is not None:
+                assert(torch.isfinite(material.normal_map.mipmap).all())
+                assert(torch.isfinite(material.normal_map.uv_scale).all())
+                args.append(material.normal_map.mipmap)
+                args.append(material.normal_map.uv_scale)
+            else:
+                args.append(None)
+                args.append(None)
             args.append(material.two_sided)
         for light in scene.area_lights:
             args.append(light.shape_id)
             args.append(light.intensity)
             args.append(light.two_sided)
         if scene.envmap is not None:
+            assert(torch.isfinite(scene.envmap.values.mipmap).all())
+            assert(torch.isfinite(scene.envmap.values.uv_scale).all())
+            assert(torch.isfinite(scene.envmap.env_to_world).all())
+            assert(torch.isfinite(scene.envmap.world_to_env).all())
+            assert(torch.isfinite(scene.envmap.sample_cdf_ys).all())
+            assert(torch.isfinite(scene.envmap.sample_cdf_xs).all())
             args.append(scene.envmap.values.mipmap)
             args.append(scene.envmap.values.uv_scale)
             args.append(scene.envmap.env_to_world)
@@ -148,11 +181,16 @@ class RenderFunction(torch.autograd.Function):
         current_index += 1
         num_lights = args[current_index]
         current_index += 1
+        
         cam_position = args[current_index]
         current_index += 1
         cam_look_at = args[current_index]
         current_index += 1
         cam_up = args[current_index]
+        current_index += 1
+        cam_to_world = args[current_index]
+        current_index += 1
+        world_to_cam = args[current_index]
         current_index += 1
         ndc_to_cam = args[current_index]
         current_index += 1
@@ -164,15 +202,30 @@ class RenderFunction(torch.autograd.Function):
         current_index += 1
         camera_type = args[current_index]
         current_index += 1
-        camera = redner.Camera(resolution[1],
-                               resolution[0],
-                               redner.float_ptr(cam_position.data_ptr()),
-                               redner.float_ptr(cam_look_at.data_ptr()),
-                               redner.float_ptr(cam_up.data_ptr()),
-                               redner.float_ptr(ndc_to_cam.data_ptr()),
-                               redner.float_ptr(cam_to_ndc.data_ptr()),
-                               clip_near,
-                               camera_type)
+        if cam_to_world is None:
+            camera = redner.Camera(resolution[1],
+                                   resolution[0],
+                                   redner.float_ptr(cam_position.data_ptr()),
+                                   redner.float_ptr(cam_look_at.data_ptr()),
+                                   redner.float_ptr(cam_up.data_ptr()),
+                                   redner.float_ptr(0), # cam_to_world
+                                   redner.float_ptr(0), # world_to_cam
+                                   redner.float_ptr(ndc_to_cam.data_ptr()),
+                                   redner.float_ptr(cam_to_ndc.data_ptr()),
+                                   clip_near,
+                                   camera_type)
+        else:
+            camera = redner.Camera(resolution[1],
+                                   resolution[0],
+                                   redner.float_ptr(0), # cam_position
+                                   redner.float_ptr(0), # cam_look_at
+                                   redner.float_ptr(0), # cam_up
+                                   redner.float_ptr(cam_to_world.data_ptr()),
+                                   redner.float_ptr(world_to_cam.data_ptr()),
+                                   redner.float_ptr(ndc_to_cam.data_ptr()),
+                                   redner.float_ptr(cam_to_ndc.data_ptr()),
+                                   clip_near,
+                                   camera_type)
         shapes = []
         for i in range(num_shapes):
             vertices = args[current_index]
@@ -182,6 +235,10 @@ class RenderFunction(torch.autograd.Function):
             uvs = args[current_index]
             current_index += 1
             normals = args[current_index]
+            current_index += 1
+            uv_indices = args[current_index]
+            current_index += 1
+            normal_indices = args[current_index]
             current_index += 1
             material_id = args[current_index]
             current_index += 1
@@ -193,12 +250,20 @@ class RenderFunction(torch.autograd.Function):
                 assert(uvs.is_contiguous())
             if normals is not None:
                 assert(normals.is_contiguous())
+            if uv_indices is not None:
+                assert(uv_indices.is_contiguous())
+            if normal_indices is not None:
+                assert(normal_indices.is_contiguous())
             shapes.append(redner.Shape(\
                 redner.float_ptr(vertices.data_ptr()),
                 redner.int_ptr(indices.data_ptr()),
                 redner.float_ptr(uvs.data_ptr() if uvs is not None else 0),
                 redner.float_ptr(normals.data_ptr() if normals is not None else 0),
+                redner.int_ptr(uv_indices.data_ptr() if uv_indices is not None else 0),
+                redner.int_ptr(normal_indices.data_ptr() if normal_indices is not None else 0),
                 int(vertices.shape[0]),
+                int(uvs.shape[0]) if uvs is not None else 0,
+                int(normals.shape[0]) if normals is not None else 0,
                 int(indices.shape[0]),
                 material_id,
                 light_id))
@@ -215,6 +280,10 @@ class RenderFunction(torch.autograd.Function):
             roughness = args[current_index]
             current_index += 1
             roughness_uv_scale = args[current_index]
+            current_index += 1
+            normal_map = args[current_index]
+            current_index += 1
+            normal_map_uv_scale = args[current_index]
             current_index += 1
             two_sided = args[current_index]
             current_index += 1
@@ -255,10 +324,22 @@ class RenderFunction(torch.autograd.Function):
                     int(roughness.shape[1]), # height
                     int(roughness.shape[0]), # num levels
                     redner.float_ptr(roughness_uv_scale.data_ptr()))
+            if normal_map is not None:
+                assert(normal_map.dim() == 4)
+                normal_map = redner.Texture3(\
+                    redner.float_ptr(normal_map.data_ptr()),
+                    int(normal_map.shape[2]), # width
+                    int(normal_map.shape[1]), # height
+                    int(normal_map.shape[0]), # num levels
+                    redner.float_ptr(normal_map_uv_scale.data_ptr()))
+            else:
+                normal_map = redner.Texture3(\
+                    redner.float_ptr(0), 0, 0, 0, redner.float_ptr(0))
             materials.append(redner.Material(\
                 diffuse_reflectance,
                 specular_reflectance,
                 roughness,
+                normal_map,
                 two_sided))
 
         area_lights = []
@@ -365,6 +446,7 @@ class RenderFunction(torch.autograd.Function):
         # pyredner.imwrite(debug_img, 'debug.exr')
         # exit()
 
+        ctx.camera = camera
         ctx.shapes = shapes
         ctx.materials = materials
         ctx.area_lights = area_lights
@@ -381,26 +463,48 @@ class RenderFunction(torch.autograd.Function):
             grad_img = grad_img.contiguous()
         scene = ctx.scene
         options = ctx.options
-
-        d_cam_position = torch.zeros(3)
-        d_cam_look = torch.zeros(3)
-        d_cam_up = torch.zeros(3)
-        d_ndc_to_cam = torch.zeros(3, 3)
-        d_cam_to_ndc = torch.zeros(3, 3)
-        d_camera = redner.DCamera(redner.float_ptr(d_cam_position.data_ptr()),
-                                  redner.float_ptr(d_cam_look.data_ptr()),
-                                  redner.float_ptr(d_cam_up.data_ptr()),
-                                  redner.float_ptr(d_ndc_to_cam.data_ptr()),
-                                  redner.float_ptr(d_cam_to_ndc.data_ptr()))
+        camera = ctx.camera
+        
+        if camera.use_look_at:
+            d_cam_position = torch.zeros(3, device = pyredner.get_device())
+            d_cam_look = torch.zeros(3, device = pyredner.get_device())
+            d_cam_up = torch.zeros(3, device = pyredner.get_device())
+            d_cam_to_world = None
+            d_wolrd_to_cam = None
+        else:
+            d_cam_position = None
+            d_cam_look = None
+            d_cam_up = None
+            d_cam_to_world = torch.zeros(4, 4, device = pyredner.get_device())
+            d_wolrd_to_cam = torch.zeros(4, 4, device = pyredner.get_device())
+        d_ndc_to_cam = torch.zeros(3, 3, device = pyredner.get_device())
+        d_cam_to_ndc = torch.zeros(3, 3, device = pyredner.get_device())
+        if camera.use_look_at:
+            d_camera = redner.DCamera(redner.float_ptr(d_cam_position.data_ptr()),
+                                      redner.float_ptr(d_cam_look.data_ptr()),
+                                      redner.float_ptr(d_cam_up.data_ptr()),
+                                      redner.float_ptr(0), # cam_to_world
+                                      redner.float_ptr(0), # world_to_cam
+                                      redner.float_ptr(d_ndc_to_cam.data_ptr()),
+                                      redner.float_ptr(d_cam_to_ndc.data_ptr()))
+        else:
+            d_camera = redner.DCamera(redner.float_ptr(0), # pos
+                                      redner.float_ptr(0), # look
+                                      redner.float_ptr(0), # up
+                                      redner.float_ptr(d_cam_to_world.data_ptr()),
+                                      redner.float_ptr(d_wolrd_to_cam.data_ptr()),
+                                      redner.float_ptr(d_ndc_to_cam.data_ptr()),
+                                      redner.float_ptr(d_cam_to_ndc.data_ptr()))
         d_vertices_list = []
         d_uvs_list = []
         d_normals_list = []
         d_shapes = []
         for shape in ctx.shapes:
             num_vertices = shape.num_vertices
+            num_uv_vertices = shape.num_uv_vertices
             d_vertices = torch.zeros(num_vertices, 3,
                 device = pyredner.get_device())
-            d_uvs = torch.zeros(num_vertices, 2,
+            d_uvs = torch.zeros(num_uv_vertices, 2,
                 device = pyredner.get_device()) if shape.has_uvs() else None
             d_normals = torch.zeros(num_vertices, 3,
                 device = pyredner.get_device()) if shape.has_normals() else None
@@ -413,13 +517,19 @@ class RenderFunction(torch.autograd.Function):
                 redner.float_ptr(d_normals.data_ptr() if d_normals is not None else 0)))
 
         d_diffuse_list = []
+        d_diffuse_uv_scale_list = []
         d_specular_list = []
+        d_specular_uv_scale_list = []
         d_roughness_list = []
+        d_roughness_uv_scale_list = []
+        d_normal_map_list = []
+        d_normal_map_uv_scale_list = []
         d_materials = []
         for material in ctx.materials:
             diffuse_size = material.get_diffuse_size()
             specular_size = material.get_specular_size()
             roughness_size = material.get_roughness_size()
+            normal_map_size = material.get_normal_map_size()
             if diffuse_size[0] == 0:
                 d_diffuse = torch.zeros(3, device = pyredner.get_device())
             else:
@@ -441,12 +551,28 @@ class RenderFunction(torch.autograd.Function):
                                           roughness_size[1],
                                           roughness_size[0],
                                           1, device = pyredner.get_device())
+            if normal_map_size[0] == 0:
+                d_normal_map = None
+            else:
+                d_normal_map = torch.zeros(normal_map_size[2],
+                                           normal_map_size[1],
+                                           normal_map_size[0],
+                                           3, device = pyredner.get_device())
             d_diffuse_list.append(d_diffuse)
             d_specular_list.append(d_specular)
             d_roughness_list.append(d_roughness)
-            d_diffuse_uv_scale = torch.zeros(2)
-            d_specular_uv_scale = torch.zeros(2)
-            d_roughness_uv_scale = torch.zeros(2)
+            d_normal_map_list.append(d_normal_map)
+            d_diffuse_uv_scale = torch.zeros(2, device = pyredner.get_device())
+            d_specular_uv_scale = torch.zeros(2, device = pyredner.get_device())
+            d_roughness_uv_scale = torch.zeros(2, device = pyredner.get_device())
+            d_diffuse_uv_scale_list.append(d_diffuse_uv_scale)
+            d_specular_uv_scale_list.append(d_specular_uv_scale)
+            d_roughness_uv_scale_list.append(d_roughness_uv_scale)
+            if d_normal_map is None:
+                d_normal_map_uv_scale = None
+            else:
+                d_normal_map_uv_scale = torch.zeros(2, device = pyredner.get_device())
+            d_normal_map_uv_scale_list.append(d_normal_map_uv_scale)
             d_diffuse_tex = redner.Texture3(\
                 redner.float_ptr(d_diffuse.data_ptr()),
                 diffuse_size[0], diffuse_size[1], diffuse_size[2],
@@ -459,8 +585,16 @@ class RenderFunction(torch.autograd.Function):
                 redner.float_ptr(d_roughness.data_ptr()),
                 roughness_size[0], roughness_size[1], roughness_size[2],
                 redner.float_ptr(d_roughness_uv_scale.data_ptr()))
+            if d_normal_map is None:
+                d_normal_map = redner.Texture3(\
+                    redner.float_ptr(0), 0, 0, 0, redner.float_ptr(0))
+            else:
+                d_normal_map = redner.Texture3(\
+                    redner.float_ptr(d_normal_map.data_ptr()),
+                    normal_map_size[0], normal_map_size[1], normal_map_size[2],
+                    redner.float_ptr(d_normal_map_uv_scale.data_ptr()))
             d_materials.append(redner.DMaterial(\
-                d_diffuse_tex, d_specular_tex, d_roughness_tex))
+                d_diffuse_tex, d_specular_tex, d_roughness_tex, d_normal_map))
 
         d_intensity_list = []
         d_area_lights = []
@@ -480,12 +614,12 @@ class RenderFunction(torch.autograd.Function):
                             size[0],
                             3,
                             device = pyredner.get_device())
-            d_envmap_uv_scale = torch.zeros(2)
+            d_envmap_uv_scale = torch.zeros(2, device = pyredner.get_device())
             d_envmap_tex = redner.Texture3(\
                 redner.float_ptr(d_envmap_values.data_ptr()),
                 size[0], size[1], size[2],
                 redner.float_ptr(d_envmap_uv_scale.data_ptr()))
-            d_world_to_env = torch.zeros(4, 4)
+            d_world_to_env = torch.zeros(4, 4, device = pyredner.get_device())
             d_envmap = redner.DEnvironmentMap(\
                 d_envmap_tex,
                 redner.float_ptr(d_world_to_env.data_ptr()))
@@ -512,9 +646,9 @@ class RenderFunction(torch.autograd.Function):
         if print_timing:
             print('Backward pass, time: %.5f s' % time_elapsed)
 
-        # # For debugging
-        # # pyredner.imwrite(grad_img, 'grad_img.exr')
-        # # grad_img = torch.ones(256, 256, 3, device = pyredner.get_device())
+        # For debugging
+        # pyredner.imwrite(grad_img, 'grad_img.exr')
+        # grad_img = torch.ones(256, 256, 3, device = pyredner.get_device())
         # debug_img = torch.zeros(256, 256, 3)
         # start = time.time()
         # redner.render(scene, options,
@@ -525,6 +659,7 @@ class RenderFunction(torch.autograd.Function):
         # time_elapsed = time.time() - start
         # if print_timing:
         #     print('Backward pass, time: %.5f s' % time_elapsed)
+        # debug_img = debug_img[:, :, 0]
         # pyredner.imwrite(debug_img, 'debug.exr')
         # pyredner.imwrite(-debug_img, 'debug_.exr')
         # debug_img = debug_img.numpy()
@@ -536,7 +671,7 @@ class RenderFunction(torch.autograd.Function):
         # debug_max = 0.5
         # debug_min = -0.5
         # debug_img = np.clip((debug_img - debug_min) / (debug_max - debug_min), 0, 1)
-        # debug_img = debug_img[:, :, 0]
+        # # debug_img = debug_img[:, :, 0]
         # import matplotlib.cm as cm
         # debug_img = cm.viridis(debug_img)
         # skimage.io.imsave('debug.png', np.power(debug_img, 1/2.2))
@@ -547,11 +682,20 @@ class RenderFunction(torch.autograd.Function):
         ret_list.append(None) # num_shapes
         ret_list.append(None) # num_materials
         ret_list.append(None) # num_lights
-        ret_list.append(d_cam_position)
-        ret_list.append(d_cam_look)
-        ret_list.append(d_cam_up)
-        ret_list.append(d_ndc_to_cam)
-        ret_list.append(d_cam_to_ndc)
+        if camera.use_look_at:
+            ret_list.append(d_cam_position.cpu())
+            ret_list.append(d_cam_look.cpu())
+            ret_list.append(d_cam_up.cpu())
+            ret_list.append(None) # cam_to_world
+            ret_list.append(None) # world_to_cam
+        else:
+            ret_list.append(None) # pos
+            ret_list.append(None) # look
+            ret_list.append(None) # up
+            ret_list.append(d_cam_to_world.cpu())
+            ret_list.append(d_world_to_cam.cpu())
+        ret_list.append(d_ndc_to_cam.cpu())
+        ret_list.append(d_cam_to_ndc.cpu())
         ret_list.append(None) # clip near
         ret_list.append(None) # resolution
         ret_list.append(None) # camera_type
@@ -562,17 +706,21 @@ class RenderFunction(torch.autograd.Function):
             ret_list.append(None) # indices
             ret_list.append(d_uvs_list[i])
             ret_list.append(d_normals_list[i])
+            ret_list.append(None) # uv_indices
+            ret_list.append(None) # normal_indices
             ret_list.append(None) # material id
             ret_list.append(None) # light id
 
         num_materials = len(ctx.materials)
         for i in range(num_materials):
             ret_list.append(d_diffuse_list[i])
-            ret_list.append(None) # diffuse_uv_scale
+            ret_list.append(d_diffuse_uv_scale_list[i])
             ret_list.append(d_specular_list[i])
-            ret_list.append(None) # specular_uv_scale
+            ret_list.append(d_specular_uv_scale_list[i])
             ret_list.append(d_roughness_list[i])
-            ret_list.append(None) # roughness_uv_scale
+            ret_list.append(d_roughness_uv_scale_list[i])
+            ret_list.append(d_normal_map_list[i])
+            ret_list.append(d_normal_map_uv_scale_list[i])
             ret_list.append(None) # two sided
 
         num_area_lights = len(ctx.area_lights)
@@ -583,9 +731,9 @@ class RenderFunction(torch.autograd.Function):
 
         if ctx.envmap is not None:
             ret_list.append(d_envmap_values)
-            ret_list.append(None) # uv_scale
+            ret_list.append(d_envmap_uv_scale)
             ret_list.append(None) # env_to_world
-            ret_list.append(d_world_to_env)
+            ret_list.append(d_world_to_env.cpu())
             ret_list.append(None) # sample_cdf_ys
             ret_list.append(None) # sample_cdf_xs
             ret_list.append(None) # pdf_norm

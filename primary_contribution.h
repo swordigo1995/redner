@@ -10,6 +10,7 @@
 
 struct Scene;
 struct ChannelInfo;
+struct DScene;
 
 /**
  * Accumulate the contribution for the first hit, including light source emission, AOV channels
@@ -42,12 +43,7 @@ void d_accumulate_primary_contribs(
         const Real weight,
         const ChannelInfo &channel_info,
         const float *d_rendered_image,
-        BufferView<DAreaLightInst> d_direct_lights,
-        BufferView<DTexture3> d_envmap_vals,
-        BufferView<Matrix4x4> d_world_to_envs,
+        DScene *d_scene,
         BufferView<DRay> d_incoming_rays,
         BufferView<RayDifferential> d_incoming_ray_differentials,
-        BufferView<SurfacePoint> d_shading_points,
-        BufferView<DTexture3> d_diffuse_texs,
-        BufferView<DTexture3> d_specular_texs,
-        BufferView<DTexture1> d_roughness_texs);
+        BufferView<SurfacePoint> d_shading_points);

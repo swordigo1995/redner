@@ -16,6 +16,7 @@
             return std::fmod(a, b);
         }
     }
+    using std::isfinite;
 #endif
 
 #ifndef M_PI
@@ -67,7 +68,6 @@ inline double modulo(double a, double b) {
     double r = ::fmod(a, b);
     return (r < 0.0) ? r+b : r;
 }
-
 
 template <typename T>
 DEVICE
@@ -133,24 +133,5 @@ inline int popc(uint8_t x) {
 #else
     // TODO: use _popcnt in windows
     return __builtin_popcount(x);
-#endif
-}
-
-template <typename T0, typename T1>
-DEVICE
-inline T0 atomic_add(T0 &target, T1 source) {
-#ifdef __CUDA_ARCH__
-    return atomicAdd(&target, (T0)source);
-#else
-    // TODO: windows
-    T0 old_val;
-    T0 new_val;
-    do {
-        old_val = target;
-        new_val = old_val + source;
-    } while (!__atomic_compare_exchange(&target, &old_val, &new_val, true,
-        std::memory_order::memory_order_seq_cst,
-        std::memory_order::memory_order_seq_cst));
-    return old_val;
 #endif
 }

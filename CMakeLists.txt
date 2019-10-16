@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.13)
 
 project(redner VERSION 0.0.1 DESCRIPTION "Differentiable Path Tracer")
 
@@ -10,17 +10,25 @@ if(WIN32)
 else()
     find_package(Python 3.6 COMPONENTS Development REQUIRED)
 endif()
+
 find_package(CUDA 10)
 if(CUDA_FOUND)
     find_package(OptiX REQUIRED)
 else()
     find_package(Thrust REQUIRED)
 endif()
+
 find_package(Embree)
 if(NOT EMBREE_FOUND)
+    message("Embree not found in the system. Building from scratch.")
     add_subdirectory(embree)
     set(EMBREE_INCLUDE_PATH "${PROJECT_SOURCE_DIR}/embree/include")
-    set(EMBREE_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/embree/libembree3.so")
+    if(NOT DEFINED EMBREE_INSTALL_PREFIX)
+        set(EMBREE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}" CACHE PATH "Where to install Embree?")
+    endif()
+    install(TARGETS embree
+        RUNTIME DESTINATION "${EMBREE_INSTALL_PREFIX}/embree"
+        LIBRARY DESTINATION "${EMBREE_INSTALL_PREFIX}/embree")
 endif()
 
 include_directories(${Python_INCLUDE_DIRS})
@@ -42,6 +50,7 @@ set(SRCS aabb.h
          active_pixels.h
          area_light.h
          atomic.h
+         automatic_uv_map.h
          bsdf_sample.h
          buffer.h
          camera.h
@@ -76,9 +85,10 @@ set(SRCS aabb.h
          texture.h
          transform.h
          vector.h
+         xatlas/xatlas.h
          aabb.cpp
          active_pixels.cpp
-         area_light.cpp
+         automatic_uv_map.cpp
          bsdf_sample.cpp
          camera.cpp
          channels.cpp
@@ -98,7 +108,8 @@ set(SRCS aabb.h
          redner.cpp
          scene.cpp
          shape.cpp
-         sobol_sampler.cpp)
+         sobol_sampler.cpp
+         xatlas/xatlas.cpp)
 
 if(APPLE)
     # The "-undefined dynamic_lookup" is a hack for systems with
@@ -112,7 +123,7 @@ if(APPLE)
     set(DYNAMIC_LOOKUP "-undefined dynamic_lookup")
 endif()
 if (WIN32)
-pybind11_add_module(redner SHARED  ${SRCS} )
+    pybind11_add_module(redner SHARED ${SRCS})
 endif()
 
 if(CUDA_FOUND)
@@ -120,7 +131,6 @@ if(CUDA_FOUND)
     set_source_files_properties(
         aabb.cpp
         active_pixels.cpp
-        area_light.cpp
         bsdf_sample.cpp
         camera.cpp
         channels.cpp
@@ -141,11 +151,17 @@ if(CUDA_FOUND)
     set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -std=c++14")
 
     cuda_add_library(redner MODULE ${SRCS})
-    target_link_libraries(redner
-        ${EMBREE_LIBRARY}
-        ${optix_prime_LIBRARY}
-        ${CUDA_curand_LIBRARY}
-        ${DYNAMIC_LOOKUP})
+    if(NOT EMBREE_FOUND)
+        target_link_libraries(redner
+            embree
+            ${optix_prime_LIBRARY}
+            ${DYNAMIC_LOOKUP})
+    else()
+        target_link_libraries(redner
+            ${EMBREE_LIBRARY}
+            ${optix_prime_LIBRARY}
+            ${DYNAMIC_LOOKUP})
+    endif()
 else()
 if (NOT WIN32)
     add_library(redner MODULE ${SRCS})
@@ -158,14 +174,25 @@ if (NOT WIN32)
     # https://github.com/pybind/pybind11/blob/master/tools/pybind11Tools.cmake
     # is to not link against Python library at all and resolve the symbols
     # at compile time.
-    target_link_libraries(redner
-        ${EMBREE_LIBRARY}
-        ${DYNAMIC_LOOKUP})
+    if(NOT EMBREE_FOUND)
+        target_link_libraries(redner
+            embree
+            ${DYNAMIC_LOOKUP})
+    else()
+        target_link_libraries(redner
+            ${EMBREE_LIBRARY}
+            ${DYNAMIC_LOOKUP})
+    endif()
 else()
-    target_link_libraries(redner
-	PRIVATE
-        ${EMBREE_LIBRARY} 
-        )
+    if(NOT EMBREE_FOUND)
+        target_link_libraries(redner
+            PRIVATE
+            embree)
+    else()
+        target_link_libraries(redner
+            PRIVATE
+            ${EMBREE_LIBRARY})
+    endif()
 endif()
 
 endif()
@@ -185,14 +212,19 @@ install(
 
 # OpenEXR
 find_package(OpenEXR REQUIRED)
-if(NOT OPENEXR_FOUND)
-    add_subdirectory(openexr)
-endif()
+
 # Install openexrpython
 if(APPLE)
     set(ENV{MACOSX_DEPLOYMENT_TARGET} 10.9)
 endif()
 install(CODE "execute_process(COMMAND python ${CMAKE_CURRENT_SOURCE_DIR}/openexrpython/setup.py install
                               WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/openexrpython)")
+
+# Install pyredner & pyredner_tensorflow
 install(CODE "execute_process(COMMAND python ${CMAKE_CURRENT_SOURCE_DIR}/setup.py install
                               WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})")
+
+find_package(TensorFlow)
+if(TensorFlow_FOUND)
+    add_subdirectory(pyredner_tensorflow/custom_ops)
+endif()

@@ -6,6 +6,7 @@ class Material:
                  diffuse_reflectance,
                  specular_reflectance = None,
                  roughness = None,
+                 normal_map = None,
                  two_sided = False):
         if specular_reflectance is None:
             specular_reflectance = pyredner.Texture(\
@@ -21,25 +22,13 @@ class Material:
             specular_reflectance = pyredner.Texture(specular_reflectance)
         if isinstance(roughness, torch.Tensor):
             roughness = pyredner.Texture(roughness)
-
-        assert(diffuse_reflectance.texels.is_contiguous())
-        assert(diffuse_reflectance.texels.dtype == torch.float32)
-        assert(specular_reflectance.texels.is_contiguous())
-        assert(specular_reflectance.texels.dtype == torch.float32)
-        assert(roughness.texels.is_contiguous())
-        assert(roughness.texels.dtype == torch.float32)
-        if pyredner.get_use_gpu():
-            assert(diffuse_reflectance.texels.is_cuda)
-            assert(specular_reflectance.texels.is_cuda)
-            assert(roughness.texels.is_cuda)
-        else:
-            assert(not diffuse_reflectance.texels.is_cuda)
-            assert(not specular_reflectance.texels.is_cuda)
-            assert(not roughness.texels.is_cuda)
+        if normal_map is not None and isinstance(normal_map, torch.Tensor):
+            normal_map = pyredner.Texture(normal_map)
 
         self.diffuse_reflectance = diffuse_reflectance
         self.specular_reflectance = specular_reflectance
         self.roughness = roughness
+        self.normal_map = normal_map
         self.two_sided = two_sided
 
     def state_dict(self):
@@ -47,14 +36,17 @@ class Material:
             'diffuse_reflectance': self.diffuse_reflectance.state_dict(),
             'specular_reflectance': self.specular_reflectance.state_dict(),
             'roughness': self.roughness.state_dict(),
+            'normal_map': self.normal_map.state_dict() if self.normal_map is not None else None,
             'two_sided': self.two_sided,
         }
 
     @classmethod
     def load_state_dict(cls, state_dict):
+        normal_map = state_dict['normal_map']
         out = cls(
             pyredner.Texture.load_state_dict(state_dict['diffuse_reflectance']),
             pyredner.Texture.load_state_dict(state_dict['specular_reflectance']),
             pyredner.Texture.load_state_dict(state_dict['roughness']),
+            pyredner.Texture.load_state_dict(normal_map) if normal_map is not None else None,
             state_dict['two_sided'])
         return out

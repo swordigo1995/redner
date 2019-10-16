@@ -2,43 +2,6 @@
 #include "parallel.h"
 #include "test_utils.h"
 
-struct vertex_accumulator {
-    vertex_accumulator(const DVertex *dv = nullptr, DShape *ds = nullptr)
-        : d_vertices(dv), d_shapes(ds) {}
-
-    DEVICE
-    inline void operator()(int idx) {
-        auto sid = d_vertices[idx].shape_id;
-        auto vid = d_vertices[idx].vertex_id;
-        const auto &d_v = d_vertices[idx].d_v;
-        d_shapes[sid].vertices[3 * vid + 0] += d_v[0];
-        d_shapes[sid].vertices[3 * vid + 1] += d_v[1];
-        d_shapes[sid].vertices[3 * vid + 2] += d_v[2];
-        if (d_shapes[sid].uvs != nullptr) {
-            const auto &d_uv = d_vertices[idx].d_uv;
-            d_shapes[sid].uvs[2 * vid + 0] += d_uv[0];
-            d_shapes[sid].uvs[2 * vid + 1] += d_uv[1];
-        }
-        if (d_shapes[sid].normals != nullptr) {
-            const auto &d_n = d_vertices[idx].d_n;
-            d_shapes[sid].normals[3 * vid + 0] += d_n[0];
-            d_shapes[sid].normals[3 * vid + 1] += d_n[1];
-            d_shapes[sid].normals[3 * vid + 2] += d_n[2];
-        }
-    }
-
-    const DVertex *d_vertices;
-    DShape *d_shapes;
-};
-
-void accumulate_vertex(const BufferView<DVertex> &d_vertices,
-                       BufferView<DShape> shapes,
-                       bool use_gpu) {
-    parallel_for(vertex_accumulator{
-        d_vertices.begin(), shapes.begin()
-    }, d_vertices.size(), use_gpu);
-}
-
 void test_d_intersect() {
     std::vector<Vector3f> vertices(3);
     vertices[0] = Vector3f{-1.f, 0.f, 1.f};
@@ -51,10 +14,14 @@ void test_d_intersect() {
                              Vector3{1, 1, 1}, Vector3{1, 1, 1}};
     Shape shape{ptr<float>(&vertices[0][0]),
                 ptr<int>(&indices[0][0]),
-                nullptr,
-                nullptr,
-                3,
-                1,
+                nullptr, // uvs
+                nullptr, // normals
+                nullptr, // uv_indices
+                nullptr, // normal_indices
+                3, // num_vertices
+                0, // num_uv_vertices
+                0, // num_normal_vertices
+                1, // num_triangles
                 0,
                 -1};
     SurfacePoint d_point;
@@ -76,7 +43,9 @@ void test_d_intersect() {
     RayDifferential d_ray_diff{
         Vector3{0, 0, 0}, Vector3{0, 0, 0},
         Vector3{0, 0, 0}, Vector3{0, 0, 0}};
-    DVertex d_v[3] = {DVertex{}, DVertex{}, DVertex{}};
+    Vector3 d_v_p[3] = {Vector3{0, 0, 0}, Vector3{0, 0, 0}, Vector3{0, 0, 0}};
+    Vector3 d_v_n[3] = {Vector3{0, 0, 0}, Vector3{0, 0, 0}, Vector3{0, 0, 0}};
+    Vector2 d_v_uv[3] = {Vector2{0, 0}, Vector2{0, 0}, Vector2{0, 0}};
     d_intersect_shape(shape,
                       0,
                       ray,
@@ -85,7 +54,9 @@ void test_d_intersect() {
                       d_new_ray_diff,
                       d_ray,
                       d_ray_diff,
-                      d_v);
+                      d_v_p,
+                      d_v_n,
+                      d_v_uv);
     // Check ray derivatives
     auto finite_delta = Real(1e-4);
     for (int i = 0; i < 3; i++) {
@@ -289,7 +260,7 @@ void test_d_intersect() {
                          sum(ray_diff_pos.org_dy - ray_diff_neg.org_dy) +
                          sum(ray_diff_pos.dir_dx - ray_diff_neg.dir_dx) +
                          sum(ray_diff_pos.dir_dy - ray_diff_neg.dir_dy)) / (2 * finite_delta);
-            equal_or_error(__FILE__, __LINE__, diff, d_v[vi].d_v[i], Real(5e-3));
+            equal_or_error(__FILE__, __LINE__, diff, d_v_p[vi][i], Real(5e-3));
         }
     }
 }
@@ -303,10 +274,14 @@ void test_d_sample_shape() {
     indices[0] = Vector3i{0, 1, 2};
     Shape shape{ptr<float>(&vertices[0][0]),
                 ptr<int>(&indices[0][0]),
-                nullptr,
-                nullptr,
-                3,
-                1,
+                nullptr, // uvs
+                nullptr, // normals
+                nullptr, // uv_indices
+                nullptr, // normal_indices
+                3, // num_vertices
+                0, // num_uv_vertices
+                0, // num_normal_vertices
+                1, // num_triangles
                 0,
                 -1};
     auto sample = Vector2{0.5, 0.5};
@@ -319,7 +294,7 @@ void test_d_sample_shape() {
               Vector3{1, 1, 1}};
     d_point.uv = Vector2{1, 1};
 
-    DVertex d_v[3] = {DVertex{}, DVertex{}, DVertex{}};
+    Vector3 d_v[3] = {Vector3{0, 0, 0}, Vector3{0, 0, 0}, Vector3{0, 0, 0}};
     d_sample_shape(shape, 0, sample, d_point, d_v);
 
     // Check vertex derivatives
@@ -340,7 +315,7 @@ void test_d_sample_shape() {
                          sum(positive.shading_frame.n - negative.shading_frame.n) +
                          sum(positive.uv - negative.uv)) / (2 * finite_delta);
             equal_or_error(__FILE__, __LINE__,
-                diff, d_v[vi].d_v[i], Real(5e-3));
+                diff, d_v[vi][i], Real(5e-3));
         }
     }
 }

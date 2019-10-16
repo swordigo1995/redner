@@ -1,15 +1,16 @@
 #include "redner.h"
-#include "py_utils.h"
-#include "pathtracer.h"
+#include "active_pixels.h"
+#include "area_light.h"
+#include "automatic_uv_map.h"
 #include "camera.h"
+#include "envmap.h"
+#include "load_serialized.h"
+#include "material.h"
+#include "pathtracer.h"
+#include "ptr.h"
+#include "py_utils.h"
 #include "scene.h"
 #include "shape.h"
-#include "material.h"
-#include "area_light.h"
-#include "envmap.h"
-#include "active_pixels.h"
-#include "ptr.h"
-#include "load_serialized.h"
 
 #include <pybind11/stl.h>
 
@@ -24,25 +25,31 @@ PYBIND11_MODULE(redner, m) {
     py::enum_<CameraType>(m, "CameraType")
         .value("perspective", CameraType::Perspective)
         .value("orthographic", CameraType::Orthographic)
-        .value("fisheye", CameraType::Fisheye);
+        .value("fisheye", CameraType::Fisheye)
+        .value("panorama", CameraType::Panorama);
 
     py::class_<Camera>(m, "Camera")
         .def(py::init<int,
                       int,
-                      ptr<float>,
-                      ptr<float>,
-                      ptr<float>,
-                      ptr<float>,
-                      ptr<float>,
-                      float,
-                      CameraType>());
+                      ptr<float>, // position
+                      ptr<float>, // look
+                      ptr<float>, // up
+                      ptr<float>, // cam_to_world
+                      ptr<float>, // world_to_cam
+                      ptr<float>, // ndc_to_cam
+                      ptr<float>, // cam_to_ndc
+                      float, // clip_near
+                      CameraType>())
+        .def_readonly("use_look_at", &Camera::use_look_at);
 
     py::class_<DCamera>(m, "DCamera")
-        .def(py::init<ptr<float>,
-                      ptr<float>,
-                      ptr<float>,
-                      ptr<float>,
-                      ptr<float>>());
+        .def(py::init<ptr<float>, // position
+                      ptr<float>, // look
+                      ptr<float>, // up
+                      ptr<float>, // cam_to_world
+                      ptr<float>, // world_to_cam
+                      ptr<float>, // ndc_to_cam
+                      ptr<float>>()); // cam_to_ndc
 
     py::class_<Scene>(m, "Scene")
         .def(py::init<const Camera &,
@@ -65,15 +72,21 @@ PYBIND11_MODULE(redner, m) {
                       int>());
 
     py::class_<Shape>(m, "Shape")
-        .def(py::init<ptr<float>,
-                      ptr<int>,
-                      ptr<float>,
-                      ptr<float>,
-                      int,
-                      int,
-                      int,
-                      int>())
+        .def(py::init<ptr<float>, // vertices
+                      ptr<int>, // indices
+                      ptr<float>, // uvs
+                      ptr<float>, // normals
+                      ptr<int>, // uv_indices
+                      ptr<int>, // normal_indices
+                      int, // num_vertices
+                      int, // num_uv_vertices
+                      int, // num_normal_vertices
+                      int, // num_triangles
+                      int, // material_id
+                      int  // light_id
+                      >())
         .def_readonly("num_vertices", &Shape::num_vertices)
+        .def_readonly("num_uv_vertices", &Shape::num_uv_vertices)
         .def("has_uvs", &Shape::has_uvs)
         .def("has_normals", &Shape::has_normals);
 
@@ -97,18 +110,21 @@ PYBIND11_MODULE(redner, m) {
                       ptr<float>>());
 
     py::class_<Material>(m, "Material")
-        .def(py::init<Texture3,
-                      Texture3,
-                      Texture1,
+        .def(py::init<Texture3, // diffuse
+                      Texture3, // specular
+                      Texture1, // roughness
+                      Texture3, // normal_map
                       bool>())
         .def("get_diffuse_size", &Material::get_diffuse_size)
         .def("get_specular_size", &Material::get_specular_size)
-        .def("get_roughness_size", &Material::get_roughness_size);
+        .def("get_roughness_size", &Material::get_roughness_size)
+        .def("get_normal_map_size", &Material::get_normal_map_size);
 
     py::class_<DMaterial>(m, "DMaterial")
         .def(py::init<Texture3,
                       Texture3,
-                      Texture1>());
+                      Texture1,
+                      Texture3>());
 
     py::class_<AreaLight>(m, "AreaLight")
         .def(py::init<int,
@@ -175,6 +191,23 @@ PYBIND11_MODULE(redner, m) {
         .def_readwrite("normals", &MitsubaTriMesh::normals);
 
     m.def("load_serialized", &load_serialized, "");
+
+    // For auto uv unwrapping
+    py::class_<UVTriMesh>(m, "UVTriMesh")
+        .def(py::init<ptr<float>, // vertices
+                      ptr<int>, // indices
+                      ptr<float>, // uvs
+                      ptr<int>, // uv_indices
+                      int, // num_vertices
+                      int, // num_uv_vertices
+                      int>()) // num_triangles
+        .def_readwrite("uvs", &UVTriMesh::uvs)
+        .def_readwrite("uv_indices", &UVTriMesh::uv_indices)
+        .def_readwrite("num_uv_vertices", &UVTriMesh::num_uv_vertices);
+    py::class_<TextureAtlas>(m, "TextureAtlas")
+        .def(py::init<>());
+    m.def("automatic_uv_map", &automatic_uv_map, "");
+    m.def("copy_texture_atlas", &copy_texture_atlas, "");
 
     m.def("render", &render, "");
 

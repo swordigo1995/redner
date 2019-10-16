@@ -417,7 +417,8 @@ struct primary_edge_sampler {
             return;
         }
 
-        if (camera.camera_type != CameraType::Fisheye) {
+        if (camera.camera_type == CameraType::Perspective ||
+                camera.camera_type == CameraType::Orthographic) {
             // Perspective or Orthographic cameras
 
             // Uniform sample on the edge
@@ -445,17 +446,20 @@ struct primary_edge_sampler {
             auto xi = clamp(int(edge_pt[0] * camera.width), 0, camera.width - 1);
             auto yi = clamp(int(edge_pt[1] * camera.height), 0, camera.height - 1);
             auto rd = channel_info.radiance_dimension;
-            auto d_color = Vector3{
-                d_rendered_image[nd * (yi * camera.width + xi) + rd + 0],
-                d_rendered_image[nd * (yi * camera.width + xi) + rd + 1],
-                d_rendered_image[nd * (yi * camera.width + xi) + rd + 2]
-            };
+            auto d_color = Vector3{0, 0, 0};
+            if (rd != -1) {
+                d_color = Vector3{
+                    d_rendered_image[nd * (yi * camera.width + xi) + rd + 0],
+                    d_rendered_image[nd * (yi * camera.width + xi) + rd + 1],
+                    d_rendered_image[nd * (yi * camera.width + xi) + rd + 2]
+                };
+            }
             // The weight is the length of edge divided by the probability
             // of selecting this edge, divided by the length of gradients
             // of the edge equation w.r.t. screen coordinate.
             // For perspective projection the length of edge and gradients
             // cancel each other out.
-            // For fisheye we need to compute the Jacobians
+            // For fisheye & panorama we need to compute the Jacobians
             auto upper_weight = d_color / edges_pmf[edge_id];
             auto lower_weight = -d_color / edges_pmf[edge_id];
 
@@ -471,6 +475,10 @@ struct primary_edge_sampler {
                 channel_multipliers[2 * nd * idx + d + nd] = -d_channel / edges_pmf[edge_id];
             }
         } else {
+            assert(camera.camera_type == CameraType::Fisheye ||
+                camera.camera_type == CameraType::Panorama);
+            // Fisheye or Panorama
+
             // In paper we focused on linear projection model.
             // However we also support non-linear models such as fisheye
             // projection.
@@ -503,7 +511,7 @@ struct primary_edge_sampler {
             edge_records[idx].edge = edge;
             edge_records[idx].edge_pt = edge_pt;
 
-            // The edge equation for the fisheye camera is:
+            // The 3D edge equation for the fisheye & panorama camera is:
             // alpha(p) = dot(p, cross(v0_dir, v1_dir))
             // Thus the half-space normal is cross(v0_dir, v1_dir)
             // Generate two rays at the two sides of the edge
@@ -527,17 +535,20 @@ struct primary_edge_sampler {
             auto xi = int(edge_pt[0] * camera.width);
             auto yi = int(edge_pt[1] * camera.height);
             auto rd = channel_info.radiance_dimension;
-            auto d_color = Vector3{
-                d_rendered_image[nd * (yi * camera.width + xi) + rd + 0],
-                d_rendered_image[nd * (yi * camera.width + xi) + rd + 1],
-                d_rendered_image[nd * (yi * camera.width + xi) + rd + 2]
-            };
+            auto d_color = Vector3{0, 0, 0};
+            if (rd != -1) {
+                d_color = Vector3{
+                    d_rendered_image[nd * (yi * camera.width + xi) + rd + 0],
+                    d_rendered_image[nd * (yi * camera.width + xi) + rd + 1],
+                    d_rendered_image[nd * (yi * camera.width + xi) + rd + 2]
+                };
+            }
             // The weight is the length of edge divided by the probability
             // of selecting this edge, divided by the length of gradients
             // of the edge equation w.r.t. screen coordinate.
             // For perspective projection the length of edge and gradients
             // cancel each other out.
-            // For fisheye we need to compute the Jacobians
+            // For fisheye & Panorama we need to compute the Jacobians
             auto upper_weight = d_color / edges_pmf[edge_id];
             auto lower_weight = -d_color / edges_pmf[edge_id];
 
@@ -687,20 +698,10 @@ struct primary_edge_derivatives_computer {
         auto edge_contrib_lower = edge_contribs[2 * idx + 1];
         auto edge_contrib = edge_contrib_upper + edge_contrib_lower;
 
-        auto &d_v0 = d_vertices[2 * idx + 0];
-        auto &d_v1 = d_vertices[2 * idx + 1];
-        auto &d_camera = d_cameras[idx];
         // Initialize derivatives
-        d_v0 = DVertex{};
-        d_v1 = DVertex{};
-        d_camera = DCameraInst{};
         if (edge_record.edge.shape_id < 0) {
             return;
         }
-        d_v0.shape_id = edge_record.edge.shape_id;
-        d_v1.shape_id = edge_record.edge.shape_id;
-        d_v0.vertex_id = edge_record.edge.v0;
-        d_v1.vertex_id = edge_record.edge.v1;
 
         auto v0 = Vector3{get_v0(shapes, edge_record.edge)};
         auto v1 = Vector3{get_v1(shapes, edge_record.edge)};
@@ -712,13 +713,17 @@ struct primary_edge_derivatives_computer {
         auto d_v0_ss = Vector2{0, 0};
         auto d_v1_ss = Vector2{0, 0};
         auto edge_pt = edge_record.edge_pt;
-        if (camera.camera_type != CameraType::Fisheye) {
+        if (camera.camera_type == CameraType::Perspective ||
+                camera.camera_type == CameraType::Orthographic) {
             // Equation 8 in the paper
             d_v0_ss.x = v1_ss.y - edge_pt.y;
             d_v0_ss.y = edge_pt.x - v1_ss.x;
             d_v1_ss.x = edge_pt.y - v0_ss.y;
             d_v1_ss.y = v0_ss.x - edge_pt.x;
         } else {
+            assert(camera.camera_type == CameraType::Fisheye ||
+                   camera.camera_type == CameraType::Panorama);
+
             // This also works for perspective camera,
             // but for consistency we provide two versions.
             // alpha(p) = dot(p, cross(v0_dir, v1_dir))
@@ -744,32 +749,35 @@ struct primary_edge_derivatives_computer {
         d_v1_ss *= edge_contrib;
 
         // v0_ss, v1_ss = project(camera, v0, v1)
+        auto d_v0 = Vector3{0, 0, 0};
+        auto d_v1 = Vector3{0, 0, 0};
         d_project(camera, v0, v1,
             d_v0_ss.x, d_v0_ss.y,
             d_v1_ss.x, d_v1_ss.y,
-            d_camera,
-            d_v0.d_v, d_v1.d_v);
+            d_camera, d_v0, d_v1);
+        atomic_add(&d_shapes[edge_record.edge.shape_id].vertices[3 * edge_record.edge.v0], d_v0);
+        atomic_add(&d_shapes[edge_record.edge.shape_id].vertices[3 * edge_record.edge.v1], d_v1);
     }
 
     const Camera camera;
     const Shape *shapes;
     const PrimaryEdgeRecord *edge_records;
     const Real *edge_contribs;
-    DVertex *d_vertices;
-    DCameraInst *d_cameras;
+    DShape *d_shapes;
+    DCamera d_camera;
 };
 
 void compute_primary_edge_derivatives(const Scene &scene,
                                       const BufferView<PrimaryEdgeRecord> &edge_records,
                                       const BufferView<Real> &edge_contribs,
-                                      BufferView<DVertex> d_vertices,
-                                      BufferView<DCameraInst> d_cameras) {
+                                      BufferView<DShape> d_shapes,
+                                      DCamera d_camera) {
     parallel_for(primary_edge_derivatives_computer{
         scene.camera,
         scene.shapes.data,
         edge_records.begin(),
         edge_contribs.begin(),
-        d_vertices.begin(), d_cameras.begin()
+        d_shapes.begin(), d_camera
     }, edge_records.size(), scene.use_gpu);
 }
 
@@ -1659,11 +1667,14 @@ struct secondary_edge_sampler {
         // Setup output
         auto nd = channel_info.num_total_dimensions;
         auto rd = channel_info.radiance_dimension;
-        auto d_color = Vector3{
-            d_rendered_image[nd * pixel_id + rd + 0],
-            d_rendered_image[nd * pixel_id + rd + 1],
-            d_rendered_image[nd * pixel_id + rd + 2]
-        };
+        auto d_color = Vector3{0, 0, 0};
+        if (rd != -1) {
+            d_color = Vector3{
+                d_rendered_image[nd * pixel_id + rd + 0],
+                d_rendered_image[nd * pixel_id + rd + 1],
+                d_rendered_image[nd * pixel_id + rd + 2]
+            };
+        }
         edge_records[idx].edge = edge;
         edge_records[idx].edge_pt = sample_p; // for Jacobian computation 
         edge_records[idx].mwt = mwt; // for Jacobian computation
@@ -1974,8 +1985,6 @@ struct secondary_edge_derivatives_accumulator {
         auto pixel_id = active_pixels[idx];
         const auto &shading_point = shading_points[pixel_id];
         const auto &edge_record = edge_records[idx];
-        d_vertices[2 * idx + 0] = DVertex{};
-        d_vertices[2 * idx + 1] = DVertex{};
         if (edge_record.edge.shape_id < 0) {
             return;
         }
@@ -2006,17 +2015,13 @@ struct secondary_edge_derivatives_accumulator {
         };
         grad(shading_point.position, edge_surface_point0, edge_contrib0);
         grad(shading_point.position, edge_surface_point1, edge_contrib1);
-        assert(isfinite(edge_contrib0));
-        assert(isfinite(edge_contrib1));
+        //assert(isfinite(edge_contrib0));
+        //assert(isfinite(edge_contrib1));
         assert(isfinite(dcolor_dp));
 
         d_points[pixel_id].position += dcolor_dp;
-        d_vertices[2 * idx + 0].shape_id = edge_record.edge.shape_id;
-        d_vertices[2 * idx + 0].vertex_id = edge_record.edge.v0;
-        d_vertices[2 * idx + 0].d_v = dcolor_dv0;
-        d_vertices[2 * idx + 1].shape_id = edge_record.edge.shape_id;
-        d_vertices[2 * idx + 1].vertex_id = edge_record.edge.v1;
-        d_vertices[2 * idx + 1].d_v = dcolor_dv1;
+        atomic_add(&(d_shapes[edge_record.edge.shape_id].vertices[3 * edge_record.edge.v0]), dcolor_dv0);
+        atomic_add(&(d_shapes[edge_record.edge.shape_id].vertices[3 * edge_record.edge.v1]), dcolor_dv1);
     }
 
     const Shape *shapes;
@@ -2026,7 +2031,7 @@ struct secondary_edge_derivatives_accumulator {
     const Vector3 *edge_surface_points;
     const Real *edge_contribs;
     SurfacePoint *d_points;
-    DVertex *d_vertices;
+    DShape *d_shapes;
 };
 
 void accumulate_secondary_edge_derivatives(const Scene &scene,
@@ -2036,7 +2041,7 @@ void accumulate_secondary_edge_derivatives(const Scene &scene,
                                            const BufferView<Vector3> &edge_surface_points,
                                            const BufferView<Real> &edge_contribs,
                                            BufferView<SurfacePoint> d_points,
-                                           BufferView<DVertex> d_vertices) {
+                                           BufferView<DShape> d_shapes) {
     parallel_for(secondary_edge_derivatives_accumulator{
         scene.shapes.data,
         active_pixels.begin(),
@@ -2045,6 +2050,6 @@ void accumulate_secondary_edge_derivatives(const Scene &scene,
         edge_surface_points.begin(),
         edge_contribs.begin(),
         d_points.begin(),
-        d_vertices.begin()
+        d_shapes.begin()
     }, active_pixels.size(), scene.use_gpu);
 }

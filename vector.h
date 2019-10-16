@@ -198,6 +198,15 @@ inline auto operator-(const TVector3<T0> &v0,
 
 template <typename T0, typename T1>
 DEVICE
+inline auto& operator-=(TVector2<T0> &v0,
+                        const TVector2<T1> &v1) {
+    v0[0] -= v1[0];
+    v0[1] -= v1[1];
+    return v0;
+}
+
+template <typename T0, typename T1>
+DEVICE
 inline auto& operator-=(TVector3<T0> &v0,
                         const TVector3<T1> &v1) {
     v0[0] -= v1[0];
@@ -567,23 +576,6 @@ inline bool isfinite(const Vector3 &v) {
 DEVICE
 inline bool is_zero(const Vector3 &v) {
     return v.x == 0 && v.y == 0 && v.z == 0;
-}
-
-template <typename T>
-DEVICE
-inline TVector2<T> atomic_add(TVector2<T> &target, const TVector2<T> &source) {
-    atomic_add(target[0], source[0]);
-    atomic_add(target[1], source[1]);
-    return target;
-}
-
-template <typename T>
-DEVICE
-inline TVector3<T> atomic_add(TVector3<T> &target, const TVector3<T> &source) {
-    atomic_add(target[0], source[0]);
-    atomic_add(target[1], source[1]);
-    atomic_add(target[2], source[2]);
-    return target;
 }
 
 template <typename T>

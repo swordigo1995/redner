@@ -10,9 +10,13 @@ struct Shape {
     Shape() {}
     Shape(ptr<float> vertices,
           ptr<int> indices,
-          ptr<float> uvs,
-          ptr<float> normals,
+          ptr<float> uvs, // optional
+          ptr<float> normals, // optional
+          ptr<int> uv_indices, // optional, overrides uv index access
+          ptr<int> normal_indices, // optional, overrides normal index access
           int num_vertices,
+          int num_uv_vertices,
+          int num_normal_vertices,
           int num_triangles,
           int material_id,
           int light_id) :
@@ -20,7 +24,11 @@ struct Shape {
         indices(indices.get()),
         uvs(uvs.get()),
         normals(normals.get()),
+        uv_indices(uv_indices.get()),
+        normal_indices(normal_indices.get()),
         num_vertices(num_vertices),
+        num_uv_vertices(num_uv_vertices),
+        num_normal_vertices(num_normal_vertices),
         num_triangles(num_triangles),
         material_id(material_id),
         light_id(light_id) {}
@@ -37,7 +45,11 @@ struct Shape {
     int *indices;
     float *uvs;
     float *normals;
+    int *uv_indices;
+    int *normal_indices;
     int num_vertices;
+    int num_uv_vertices;
+    int num_normal_vertices;
     int num_triangles;
     int material_id;
     int light_id;
@@ -57,38 +69,6 @@ struct DShape {
     float *normals;
 };
 
-struct DVertex {
-    DEVICE DVertex(int shape_id = -1, int vertex_id = -1,
-        const Vector3 &d_v = Vector3{0, 0, 0},
-        const Vector2 &d_uv = Vector2{0, 0},
-        const Vector3 &d_n = Vector3{0, 0, 0})
-        : shape_id(shape_id), vertex_id(vertex_id), d_v(d_v), d_uv(d_uv), d_n(d_n) {}
-
-    int shape_id, vertex_id;
-    Vector3 d_v;
-    Vector2 d_uv;
-    Vector3 d_n;
-
-    DEVICE inline bool operator<(const DVertex &other) const {
-        if (shape_id != other.shape_id) {
-            return shape_id < other.shape_id;
-        } else {
-            return vertex_id < other.vertex_id;
-        }
-    }
-
-    DEVICE inline bool operator==(const DVertex &other) const {
-        return shape_id == other.shape_id && vertex_id == other.vertex_id;
-    }
-
-    DEVICE inline DVertex operator+(const DVertex &other) const {
-        return DVertex{shape_id, vertex_id,
-                       d_v + other.d_v,
-                       d_uv + other.d_uv,
-                       d_n + other.d_n};
-    }
-};
-
 DEVICE
 inline Vector3f get_vertex(const Shape &shape, int index) {
     return Vector3f{shape.vertices[3 * index + 0],
@@ -101,6 +81,20 @@ inline Vector3i get_indices(const Shape &shape, int index) {
     return Vector3i{shape.indices[3 * index + 0],
                     shape.indices[3 * index + 1],
                     shape.indices[3 * index + 2]};
+}
+
+DEVICE
+inline Vector3i get_uv_indices(const Shape &shape, int index) {
+    return Vector3i{shape.uv_indices[3 * index + 0],
+                    shape.uv_indices[3 * index + 1],
+                    shape.uv_indices[3 * index + 2]};
+}
+
+DEVICE
+inline Vector3i get_normal_indices(const Shape &shape, int index) {
+    return Vector3i{shape.normal_indices[3 * index + 0],
+                    shape.normal_indices[3 * index + 1],
+                    shape.normal_indices[3 * index + 2]};
 }
 
 DEVICE
@@ -161,7 +155,7 @@ inline Real get_area(const Shape &shape, int index) {
 
 DEVICE
 inline void d_get_area(const Shape &shape, int index,
-                       const Real d_area, DVertex *d_vertices) {
+                       const Real d_area, Vector3 d_v[3]) {
     auto ind = get_indices(shape, index);
     auto v0 = Vector3{get_vertex(shape, ind[0])};
     auto v1 = Vector3{get_vertex(shape, ind[1])};
@@ -173,9 +167,9 @@ inline void d_get_area(const Shape &shape, int index,
     auto d_e1 = Vector3{0, 0, 0};
     auto d_e2 = Vector3{0, 0, 0};
     d_cross(v1 - v0, v2 - v0, d_dir, d_e1, d_e2);
-    d_vertices[0].d_v -= (d_e1 + d_e2);
-    d_vertices[1].d_v += d_e1;
-    d_vertices[2].d_v += d_e2;
+    d_v[0] -= (d_e1 + d_e2);
+    d_v[1] += d_e1;
+    d_v[2] += d_e2;
 }
 
 DEVICE
@@ -195,6 +189,7 @@ inline SurfacePoint sample_shape(const Shape &shape, int index, const Vector2 &s
         v0 + e1 * b1 + e2 * b2,
         normalized_n,
         Frame(normalized_n), // TODO: phong interpolate this
+        Vector3{0, 0, 0}, // TODO: compute proper dpdu
         sample, // TODO: give true light source uv
         Vector2{0, 0}, // TODO: inherit derivatives from previous path vertex
         Vector2{0, 0}}; 
@@ -202,7 +197,7 @@ inline SurfacePoint sample_shape(const Shape &shape, int index, const Vector2 &s
 
 DEVICE
 inline void d_sample_shape(const Shape &shape, int index, const Vector2 &sample,
-                           const SurfacePoint &d_point, DVertex *d_vertices) {
+                           const SurfacePoint &d_point, Vector3 d_v[3]) {
     auto ind = get_indices(shape, index);
     auto v0 = Vector3{get_vertex(shape, ind[0])};
     auto v1 = Vector3{get_vertex(shape, ind[1])};
@@ -239,9 +234,9 @@ inline void d_sample_shape(const Shape &shape, int index, const Vector2 &sample,
     // e2 = v2 - v0
     auto d_v2 = d_e2;
     d_v0 -= d_e2;
-    d_vertices[0].d_v += d_v0;
-    d_vertices[1].d_v += d_v1;
-    d_vertices[2].d_v += d_v2;
+    d_v[0] += d_v0;
+    d_v[1] += d_v1;
+    d_v[2] += d_v2;
 }
 
 // Derivatives of projection of a point to barycentric coordinate
@@ -343,11 +338,19 @@ inline SurfacePoint intersect_shape(const Shape &shape,
     auto v0 = Vector3{get_vertex(shape, ind[0])};
     auto v1 = Vector3{get_vertex(shape, ind[1])};
     auto v2 = Vector3{get_vertex(shape, ind[2])};
+    auto uv_ind = ind;
+    if (shape.uv_indices != nullptr) {
+        uv_ind = get_uv_indices(shape, index);
+    }
+    auto normal_ind = ind;
+    if (shape.normal_indices != nullptr) {
+        normal_ind = get_normal_indices(shape, index);
+    }
     Vector2 uvs0, uvs1, uvs2;
     if (has_uvs(shape)) {
-        uvs0 = get_uv(shape, ind[0]);
-        uvs1 = get_uv(shape, ind[1]);
-        uvs2 = get_uv(shape, ind[2]);
+        uvs0 = get_uv(shape, uv_ind[0]);
+        uvs1 = get_uv(shape, uv_ind[1]);
+        uvs2 = get_uv(shape, uv_ind[2]);
     } else {
         uvs0 = Vector2{0.f, 0.f};
         uvs1 = Vector2{1.f, 0.f};
@@ -365,6 +368,22 @@ inline SurfacePoint intersect_shape(const Shape &shape,
     auto hit_pos = ray.org + ray.dir * t;
     auto geom_normal = normalize(cross(v1 - v0, v2 - v0));
 
+    // Compute triangle derivatives (for shading frame)
+    auto uvs02 = uvs0 - uvs2;
+    auto uvs12 = uvs1 - uvs2;
+    auto uv_det = uvs02[0] * uvs12[1] - uvs02[1] * uvs12[0];
+    auto dpdu = Vector3{0, 0, 0};
+    auto dpdv = Vector3{0, 0, 0};
+    if (uv_det == 0) {
+        coordinate_system(geom_normal, dpdu, dpdv);
+    } else {
+        auto inv_det = 1 / uv_det;
+        auto v02 = v0 - v2;
+        auto v12 = v1 - v2;
+        dpdu = ( uvs12[1] * v02 - uvs02[1] * v12) * inv_det;
+        dpdv = (-uvs12[0] * v02 + uvs02[0] * v12) * inv_det;
+    }
+
     // Surface derivative for ray differentials
     auto du_dxy = (- u_dxy - v_dxy) * uvs0[0] + u_dxy * uvs1[0] + v_dxy * uvs2[0];
     auto dv_dxy = (- u_dxy - v_dxy) * uvs0[1] + u_dxy * uvs1[1] + v_dxy * uvs2[1];
@@ -374,9 +393,9 @@ inline SurfacePoint intersect_shape(const Shape &shape,
     auto dn_dx = Vector3{0, 0, 0};
     auto dn_dy = Vector3{0, 0, 0};
     if (has_shading_normals(shape)) {
-        auto n0 = get_shading_normal(shape, ind[0]);
-        auto n1 = get_shading_normal(shape, ind[1]);
-        auto n2 = get_shading_normal(shape, ind[2]);
+        auto n0 = get_shading_normal(shape, normal_ind[0]);
+        auto n1 = get_shading_normal(shape, normal_ind[1]);
+        auto n2 = get_shading_normal(shape, normal_ind[2]);
 
         auto nn = w * n0 + u * n1 + v * n2;
 
@@ -396,13 +415,31 @@ inline SurfacePoint intersect_shape(const Shape &shape,
             geom_normal = -geom_normal;
         }
     }
+
+    auto frame_x = normalize(dpdu);
+    auto frame_y = cross(shading_normal, frame_x);
+    if (length_squared(frame_y) > 0) {
+        frame_y = normalize(frame_y);
+        frame_x = cross(frame_y, shading_normal);
+    } else {
+        coordinate_system(shading_normal, frame_x, frame_y);
+    }
+    auto frame = Frame(frame_x, frame_y, shading_normal);
+
     // Update ray differential
     new_ray_differential.org_dx = dpdx;
     new_ray_differential.org_dy = dpdy;
     new_ray_differential.dir_dx = ray_differential.dir_dx;
     new_ray_differential.dir_dy = ray_differential.dir_dy;
-    return SurfacePoint{hit_pos, geom_normal, Frame(shading_normal), uv,
-        du_dxy, dv_dxy, dn_dx, dn_dy};
+    return SurfacePoint{hit_pos,
+                        geom_normal,
+                        frame,
+                        dpdu,
+                        uv,
+                        du_dxy,
+                        dv_dxy,
+                        dn_dx,
+                        dn_dy};
 }
 
 DEVICE
@@ -415,16 +452,26 @@ inline void d_intersect_shape(
         const RayDifferential &d_new_ray_differential,
         DRay &d_ray,
         RayDifferential &d_ray_differential,
-        DVertex *d_vertices) {
+        Vector3 d_v_p[3],
+        Vector3 d_v_n[3],
+        Vector2 d_v_uv[3]) {
     auto ind = get_indices(shape, index);
     auto v0 = Vector3{get_vertex(shape, ind[0])};
     auto v1 = Vector3{get_vertex(shape, ind[1])};
     auto v2 = Vector3{get_vertex(shape, ind[2])};
+    auto uv_ind = ind;
+    if (shape.uv_indices != nullptr) {
+        uv_ind = get_uv_indices(shape, index);
+    }
+    auto normal_ind = ind;
+    if (shape.normal_indices != nullptr) {
+        normal_ind = get_normal_indices(shape, index);
+    }
     Vector2 uvs0, uvs1, uvs2;
     if (has_uvs(shape)) {
-        uvs0 = get_uv(shape, ind[0]);
-        uvs1 = get_uv(shape, ind[1]);
-        uvs2 = get_uv(shape, ind[2]);
+        uvs0 = get_uv(shape, uv_ind[0]);
+        uvs1 = get_uv(shape, uv_ind[1]);
+        uvs2 = get_uv(shape, uv_ind[2]);
     } else {
         uvs0 = Vector2{0.f, 0.f};
         uvs1 = Vector2{1.f, 0.f};
@@ -443,6 +490,22 @@ inline void d_intersect_shape(
     auto unnormalized_geom_normal = cross(v1 - v0, v2 - v0);
     auto geom_normal = normalize(unnormalized_geom_normal);
 
+    // Compute triangle derivatives (for shading frame)
+    auto uvs02 = uvs0 - uvs2;
+    auto uvs12 = uvs1 - uvs2;
+    auto uv_det = uvs02[0] * uvs12[1] - uvs02[1] * uvs12[0];
+    auto dpdu = Vector3{0, 0, 0};
+    auto dpdv = Vector3{0, 0, 0};
+    if (uv_det == 0) {
+        coordinate_system(geom_normal, dpdu, dpdv);
+    } else {
+        auto inv_det = 1 / uv_det;
+        auto v02 = v0 - v2;
+        auto v12 = v1 - v2;
+        dpdu = ( uvs12[1] * v02 - uvs02[1] * v12) * inv_det;
+        dpdv = (-uvs12[0] * v02 + uvs02[0] * v12) * inv_det;
+    }
+
     // Surface derivative for ray differentials
     // du_dxy = (- u_dxy - v_dxy) * uvs0[0] + u_dxy * uvs1[0] + v_dxy * uvs2[0]
     // dv_dxy = (- u_dxy - v_dxy) * uvs0[1] + u_dxy * uvs1[1] + v_dxy * uvs2[1]
@@ -454,9 +517,9 @@ inline void d_intersect_shape(
     auto dn_dx = Vector3{0, 0, 0};
     auto dn_dy = Vector3{0, 0, 0};
     if (has_shading_normals(shape)) {
-        auto n0 = get_shading_normal(shape, ind[0]);
-        auto n1 = get_shading_normal(shape, ind[1]);
-        auto n2 = get_shading_normal(shape, ind[2]);
+        auto n0 = get_shading_normal(shape, normal_ind[0]);
+        auto n1 = get_shading_normal(shape, normal_ind[1]);
+        auto n2 = get_shading_normal(shape, normal_ind[2]);
         auto nn = w * n0 + u * n1 + v * n2;
 
         // Compute dndx & dndy
@@ -476,10 +539,48 @@ inline void d_intersect_shape(
             geom_normal_flipped = true;
         }
     }
-    // point = SurfacePoint{hit_pos, geom_normal, Frame(shading_normal), uv,
-    //     du_dxy, dv_dxy, dn_dx, dn_dy}
+
+    auto frame_x_org = normalize(dpdu);
+    auto frame_y_org = cross(shading_normal, frame_x_org);
+    auto frame_y_org_not_degenerated = length_squared(frame_y_org) > 0;
+    auto frame_x = Vector3{0, 0, 0};
+    auto frame_y = Vector3{0, 0, 0};
+    if (frame_y_org_not_degenerated) {
+        frame_y = normalize(frame_y_org);
+        frame_x = cross(frame_y, shading_normal);
+    } else {
+        coordinate_system(shading_normal, frame_x, frame_y);
+    }
+    // auto frame = Frame(frame_x, frame_y, shading_normal);
+
+    // point = SurfacePoint{hit_pos,
+    //                      geom_normal,
+    //                      frame,
+    //                      uv,
+    //                      du_dxy,
+    //                      dv_dxy,
+    //                      dn_dx,
+    //                      dn_dy}
 
     // Backprop
+    auto d_frame_x = d_point.shading_frame[0];
+    auto d_frame_y = d_point.shading_frame[1];
+    auto d_shading_normal = d_point.shading_frame[2];
+    auto d_dpdu = d_point.dpdu;
+    if (frame_y_org_not_degenerated) {
+        // frame_y = normalize(frame_y_org);
+        // frame_x = cross(frame_y, shading_normal);
+        d_cross(frame_y, shading_normal, d_frame_x, d_frame_y, d_shading_normal);
+        auto d_frame_y_org = d_normalize(frame_y_org, d_frame_y);
+        // frame_x_org = normalize(dpdu)
+        // frame_y_org = cross(shading_normal, frame_x_org)
+        auto d_frame_x_org = Vector3{0, 0, 0};
+        d_cross(shading_normal, frame_x_org, d_frame_y_org, d_shading_normal, d_frame_x_org);
+        d_dpdu = d_normalize(dpdu, d_frame_x_org);
+    } else {
+        d_coordinate_system(shading_normal, d_frame_x, d_frame_y, d_shading_normal);
+    }
+
     auto d_geom_normal = d_point.geom_normal;
     // new_ray_differential.org_dx = dpdx;
     // new_ray_differential.org_dy = dpdy;
@@ -492,13 +593,16 @@ inline void d_intersect_shape(
     auto d_u = Real(0), d_v = Real(0), d_w = Real(0);
     auto d_u_dxy = Vector2{0, 0};
     auto d_v_dxy = Vector2{0, 0};
+    auto d_v0 = Vector3{0, 0, 0};
+    auto d_v1 = Vector3{0, 0, 0};
+    auto d_v2 = Vector3{0, 0, 0};
     if (has_shading_normals(shape)) {
         if (geom_normal_flipped) {
             d_geom_normal = -d_geom_normal;
         }
-        auto n0 = get_shading_normal(shape, ind[0]);
-        auto n1 = get_shading_normal(shape, ind[1]);
-        auto n2 = get_shading_normal(shape, ind[2]);
+        auto n0 = get_shading_normal(shape, normal_ind[0]);
+        auto n1 = get_shading_normal(shape, normal_ind[1]);
+        auto n2 = get_shading_normal(shape, normal_ind[2]);
         auto d_shading_normal = d_point.shading_frame[2];
         // differentiate through frame construction
         d_coordinate_system(shading_normal, d_point.shading_frame[0], d_point.shading_frame[1],
@@ -557,9 +661,9 @@ inline void d_intersect_shape(
         d_n0 += d_nn * w;
         d_n1 += d_nn * u;
         d_n2 += d_nn * v;
-        d_vertices[0].d_n += d_n0;
-        d_vertices[1].d_n += d_n1;
-        d_vertices[2].d_n += d_n2;
+        d_v_n[0] += d_n0;
+        d_v_n[1] += d_n1;
+        d_v_n[2] += d_n2;
     } else {
         d_geom_normal += d_point.shading_frame[2];
         d_coordinate_system(shading_normal, d_point.shading_frame[0], d_point.shading_frame[1],
@@ -580,11 +684,45 @@ inline void d_intersect_shape(
     d_ray_differential.dir_dy += d_dpdy * t;
     d_t += sum(d_dpdy * ray_differential.dir_dy);
 
-    // du_dxy = (- u_dxy - v_dxy) * uvs0[0] + u_dxy * uvs1[0] + v_dxy * uvs2[0]
-    // dv_dxy = (- u_dxy - v_dxy) * uvs0[1] + u_dxy * uvs1[1] + v_dxy * uvs2[1]
+    // Partial derivatives
     auto d_uvs0 = Vector2{0, 0};
     auto d_uvs1 = Vector2{0, 0};
     auto d_uvs2 = Vector2{0, 0};
+    if (uv_det == 0) {
+        // coordinate_system(geom_normal, dpdu, dpdv)
+        d_coordinate_system(geom_normal, d_dpdu, Vector3{0, 0, 0}, d_geom_normal);
+    } else {
+        // dpdu = ( uvs12[1] * v02 - uvs02[1] * v12) * inv_det
+        auto inv_det = 1 / uv_det;
+        auto v02 = v0 - v2;
+        auto v12 = v1 - v2;
+        auto d_uvs02 = Vector2{0, 0};
+        auto d_uvs12 = Vector2{0, 0};
+        d_uvs12[1] += sum(d_dpdu * v02) * inv_det;
+        auto d_v02 = d_dpdu * uvs12[1] * inv_det;
+        d_uvs02[1] += sum(d_dpdu * v12) * inv_det;
+        auto d_v12 = d_dpdu * uvs02[1] * inv_det;
+        auto d_inv_det = sum(d_dpdu * (uvs12[1] * v02 - uvs02[1] * v12));
+        // inv_det = 1 / uv_det
+        auto d_uv_det = -d_inv_det * inv_det * inv_det;
+        // uv_det = uvs02[0] * uvs12[1] - uvs02[1] * uvs12[0]
+        d_uvs02[0] += d_uv_det * uvs12[1];
+        d_uvs12[1] += d_uv_det * uvs02[0];
+        d_uvs02[1] -= d_uv_det * uvs12[0];
+        d_uvs12[0] -= d_uv_det * uvs02[1];
+        // uvs02 = uvs0 - uvs2
+        // uvs12 = uvs1 - uvs2
+        d_uvs0 += d_uvs02;
+        d_uvs1 += d_uvs12;
+        d_uvs2 -= (d_uvs02 + d_uvs12);
+        // v02 = v0 - v2
+        // v12 = v1 - v2
+        d_v0 += d_v02;
+        d_v1 += d_v12;
+        d_v2 -= (d_v02 + d_v12);
+    }
+    // du_dxy = (- u_dxy - v_dxy) * uvs0[0] + u_dxy * uvs1[0] + v_dxy * uvs2[0]
+    // dv_dxy = (- u_dxy - v_dxy) * uvs0[1] + u_dxy * uvs1[1] + v_dxy * uvs2[1]
     auto d_du_dxy = d_point.du_dxy;
     auto d_dv_dxy = d_point.dv_dxy;
     d_u_dxy += d_du_dxy * (uvs1[0] - uvs0[0]) + d_dv_dxy * (uvs1[1] - uvs0[1]);
@@ -602,9 +740,9 @@ inline void d_intersect_shape(
     auto d_v1_v0 = Vector3{0, 0, 0};
     auto d_v2_v0 = Vector3{0, 0, 0};
     d_cross(v1 - v0, v2 - v0, d_unnormalized_geom_normal, d_v1_v0, d_v2_v0);
-    auto d_v0 = (- d_v1_v0 - d_v2_v0);
-    auto d_v1 = d_v1_v0;
-    auto d_v2 = d_v2_v0;
+    d_v0 += (- d_v1_v0 - d_v2_v0);
+    d_v1 += d_v1_v0;
+    d_v2 += d_v2_v0;
     // hit_pos = ray.org + ray.dir * t
     auto d_hit_pos = d_point.position;
     d_ray.org += d_hit_pos;
@@ -632,18 +770,14 @@ inline void d_intersect_shape(
     d_intersect(v0, v1, v2, ray, ray_differential,
         d_uvt, d_u_dxy, d_v_dxy, d_t_dxy, d_v0, d_v1, d_v2, d_ray, d_ray_differential);
     if (has_uvs(shape)) {
-        d_vertices[0].d_uv += d_uvs0;
-        d_vertices[1].d_uv += d_uvs1;
-        d_vertices[2].d_uv += d_uvs2;
+        d_v_uv[0] += d_uvs0;
+        d_v_uv[1] += d_uvs1;
+        d_v_uv[2] += d_uvs2;
     }
-    d_vertices[0].d_v += d_v0;
-    d_vertices[1].d_v += d_v1;
-    d_vertices[2].d_v += d_v2;
+    d_v_p[0] += d_v0;
+    d_v_p[1] += d_v1;
+    d_v_p[2] += d_v2;
 }
-
-void accumulate_vertex(const BufferView<DVertex> &d_vertices,
-                       BufferView<DShape> shapes,
-                       bool use_gpu);
 
 void test_d_intersect();
 void test_d_sample_shape();

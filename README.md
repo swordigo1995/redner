@@ -2,6 +2,15 @@
 
 News
 
+10/08/2019 - Added automatic uv computation through the [xatlas](https://github.com/jpcy/xatlas) library. See the `compute_uvs` function in shape.py and test_compute_uvs.py.  
+10/08/2019 - Slightly changed the Shape class interface. The constructor order is different and it now takes extra 'uv_indices' and 'normal_indices' arguments for dealing with seams in UV mapping and obj loading. See pyredner/shape.py and tutorial 2.  
+09/22/2019 - We now handle inconsistencies between shading normals and geometry normals more gracefully (instead of just return zero in most cases). This helps with rendering models in the wild, say, models in ShapeNet.  
+09/21/2019 - Fixed a serious buffer overrun bug in the deferred rendering code when there is no radiance output channel. If things didn't work for you, maybe try again.  
+08/16/2019 - Added docker files for easier installation. Thanks [Seyoung Park](https://github.com/SuperShinyEyes) for the contribution again. Also I significantly improved the [wiki installation guide](https://github.com/BachiLi/redner/wiki).  
+08/13/2019 - Added normal map support. See tests/test_teapot_normal_map.py.  
+08/10/2019 - Significantly simplified the derivatives accumulation code (segmented reduction -> atomics). Also GPU backward pass got 20~30% speedup.  
+08/07/2019 - Fixed a roughness texture bug.  
+07/27/2019 - Tensorflow 1.14 support! Currently only support eager execution. We will support graph execution after tensorflow 2.0 becomes stable. See tests_tensorflow for examples (I recommend starting from tests_tensorflow/test_single_triangle.py). The CMake files should automatically detect tensorflow in python and install corresponding files. Tutorials are work in progress. Lots of thanks go to [Seyoung Park](https://github.com/SuperShinyEyes) for the contribution!  
 06/25/2019 - Added orthographic cameras (see examples/two_d_mesh.py).  
 05/13/2019 - Fixed quite a few bugs related to camera derivatives. If something didn't work for you before, maybe try again.  
 04/28/2019 - Added QMC support (see tests/test_qmc.py and the documentation in pyredner.serialize_scene()).  
@@ -24,12 +33,17 @@ the continuous derivatives significantly by replacing automatic differentiation 
 redner is expected to be used with [PyTorch](https://pytorch.org/), and can be used seamlessly with PyTorch operators. A good starting point to learn how to use redner is to look at the [wiki](https://github.com/BachiLi/redner/wiki).
 While the documentation is work in progress, you can take a look at the [tests directory](tests) to have some ideas.
 redner inherits a subset of [Mitsuba](http://www.mitsuba-renderer.org) scene format,
-see [tests/test_teapot_reflectance.py](https://github.com/BachiLi/redner/blob/master/tests/test_teapot_reflectance.py) and [tests/test_teapot_specular.py](https://github.com/BachiLi/redner/blob/master/tests/test_teapot_specular.py) for examples of loading Mitsuba scene files. There is also a Wavefront obj file loader for individual meshes, take a look at [tutorials/02_pose_estimation.py](https://github.com/BachiLi/redner/blob/master/tutorials/02_pose_estimation.py).
+see [tests/test_teapot_reflectance.py](https://github.com/BachiLi/redner/blob/master/tests/test_teapot_reflectance.py) and [tests/test_teapot_specular.py](https://github.com/BachiLi/redner/blob/master/tests/test_teapot_specular.py) for examples of loading Mitsuba scene files. There is also a Wavefront obj file loader for individual meshes, take a look at [tutorials/02_pose_estimation.py](https://github.com/BachiLi/redner/blob/master/tutorials/02_pose_estimation.py). redner also supports tensorflow 1.14 now with eager mode enabled, see [tests_tensorflow](tests_tensorflow) for details.
+
+See [wiki](https://github.com/BachiLi/redner/wiki/Installation) for an installation guide. We provide CMake installation or dockerfiles for Unix systems. redner is tested under MacOS with clang 7 and Ubuntu with gcc 7. In general any compiler with c++14 support should work.
+
+See [here](https://github.com/BachiLi/redner/pull/11) for a build instruction on Windows. It might be out-of-date though.
 
 redner depends on a few libraries/systems:
 - [Python 3.6 or above](https://www.python.org) (required)
 - [pybind11](https://github.com/pybind/pybind11) (required)
-- [PyTorch 0.4.1 or 1.0](https://pytorch.org) (required)
+- [PyTorch 1.1](https://pytorch.org) (required)
+- [Tensorflow 1.14](https://www.tensorflow.org/) (optional, required if PyTorch is not installed)
 - [OpenEXR](https://github.com/openexr/openexr) (required)
 - [Embree](https://embree.github.io) (required)
 - [CUDA 10](https://developer.nvidia.com/cuda-downloads) (optional, need GPU at Kepler class or newer)
@@ -38,41 +52,8 @@ redner depends on a few libraries/systems:
 - [OpenEXR Python](https://github.com/jamesbowman/openexrpython) (required, included in a submodule)
 - [Thrust](https://thrust.github.io) (required, included in a submodule)
 - [miniz](https://github.com/richgel999/miniz) (already in this repository)
+- [xatlas](https://github.com/jpcy/xatlas) (already in a submodule)
 - A few other python packages: numpy, scikit-image
-
-I recommend using conda to setup the Python related dependencies, e.g.:
-```
-conda install pybind11
-conda install pytorch-nightly -c pytorch
-```
-
-redner uses [CMake](https://cmake.org) as its build system. You need CMake 3.12 or above to build redner.
-The build procedure follows common CMake instructions.
-Ideally,
-```
-mkdir build
-cd build
-cmake ..
-make install -j 8
-```
-should build and install the project, but you may need to tell CMake where the dependencies are by defining
-the following variables:
-```
-Python_INCLUDE_DIRS
-Python_LIBRARIES
-EMBREE_INCLUDE_PATH
-EMBREE_LIBRARY
-OptiX_INCLUDE
-CUDA_LIBRARIES
-THRUST_INCLUDE_DIR
-optix_prime_LIBRARY
-CUDA_curand_LIBRARY
-```
-I suggest using ccmake or other interfaces of cmake to setup the variables.
-
-See [here](https://github.com/BachiLi/redner/pull/11) for build instruction on Windows.
-
-redner is tested under MacOS with clang 7 and Ubuntu with gcc 7. In general any compiler with c++14 support should work.
 
 The current development plan is to enhance the renderer. Following features will be added in the near future (not listed in any particular order):
 - More BSDFs e.g. glass/GGX
@@ -88,7 +69,9 @@ The current development plan is to enhance the renderer. Following features will
 - Volumetric path tracing (e.g. [http://www.cs.cornell.edu/projects/translucency/#acquisition-sa13](http://www.cs.cornell.edu/projects/translucency/#acquisition-sa13))
 - Spectral rendering
 - Backface culling
+- Gradient visualization
 - Install script
+- Spherical light sources
 - Documentation
 
 If you have any questions/comments/bug reports, feel free to open a github issue or e-mail to the author
